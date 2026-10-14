@@ -7,6 +7,10 @@ name: MMX Engine CI
 on:
   push:
     branches: ['**']
+    paths-ignore:
+      - 'ci-logs/**'
+      - 'handoff/**'
+      - '**.md'
   workflow_dispatch:
 concurrency:
   group: mmx-ci-${{ github.ref }}
@@ -79,3 +83,22 @@ jobs:
             handoff/**/*.txt
             handoff/**/*.md
           if-no-files-found: warn
+
+  # --------------------------------------------------------------------------
+  # Логи прогона -> в репозиторий (ci-logs/), чтобы читать их без доступа
+  # к закрытым хостам артефактов. Коммит помечен [skip ci].
+  # --------------------------------------------------------------------------
+  report:
+    name: 'Publish CI logs'
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [native-crypto, core-tests, apk]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*log*'
+          path: ci-logs
+      - name: 'Коммит логов в репозиторий'
+        run: bash tools/ci/publish_logs.sh

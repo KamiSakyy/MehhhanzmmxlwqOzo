@@ -1,4 +1,4 @@
-package com.mehhanz.engine.crypto;
+package com.mehhanz.studio.util;
 
 import android.content.Context;
 import android.content.pm.PackageInfo;

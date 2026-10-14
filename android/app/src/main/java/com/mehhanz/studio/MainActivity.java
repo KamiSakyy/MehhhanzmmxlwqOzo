@@ -75,7 +75,7 @@ public class MainActivity extends Activity {
             for (int i = 0; i < Math.min(16, fp.length); i++) sb.append(String.format("%02x", fp[i]));
             sb.append("…\n");
             sb.append("Проверка печати подписи: ")
-              .append(NativeCrypto.verifySigner(com.mehhanz.engine.crypto.SignerInfo.certSha256(this))
+              .append(NativeCrypto.verifySigner(com.mehhanz.studio.util.SignerInfo.certSha256(this))
                       ? "совпала ✓" : "не задана ✗").append('\n');
         } catch (Throwable t) {
             sb.append("Нативная библиотека: ОШИБКА ").append(t).append('\n');
