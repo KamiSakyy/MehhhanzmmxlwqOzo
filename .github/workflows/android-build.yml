@@ -75,7 +75,7 @@ jobs:
             android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
-      - name: 🩺 Диагностика: лог ошибки сборки (аннотации + комментарий в PR)
+      - name: 🩺 Диагностика — лог ошибки сборки (аннотации + комментарий в PR)
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,16 +83,14 @@ jobs:
           LOG=""
           for f in "$RUNNER_TEMP/debug-build.log" "$RUNNER_TEMP/release-build.log"; do
             if [ -f "$f" ]; then
-              LOG="$LOG
-===== $f =====
-$(tail -150 "$f")"
+              LOG="$LOG$(printf '\n===== %s =====\n' "$f")$(tail -150 "$f")"
             fi
           done
-          SAN=$(echo "$LOG" | sed 's/%/%25/g; s/\r/%0D/g')
-          if echo "$SAN" | grep -q "FAILURE: Build failed"; then
-            echo "$SAN" | grep -B2 -A 25 "FAILURE: Build failed" | while IFS= read -r line; do echo "::error::$line"; done
+          SAN=$(printf '%s' "$LOG" | sed 's/%/%25/g; s/\r/%0D/g')
+          if printf '%s\n' "$SAN" | grep -q "FAILURE: Build failed"; then
+            printf '%s\n' "$SAN" | grep -B2 -A 25 "FAILURE: Build failed" | while IFS= read -r line; do echo "::error::$line"; done
           else
-            echo "$SAN" | tail -40 | while IFS= read -r line; do echo "::error::$line"; done
+            printf '%s\n' "$SAN" | tail -40 | while IFS= read -r line; do echo "::error::$line"; done
           fi
           printf '### ❌ CI: сборка APK упала\n\n**Коммит:** `%s`\n**Ветка:** `%s`\n\n<details><summary>Лог сборки (хвост)</summary>\n\n```\n%s\n```\n\n</details>\n' "${{ github.sha }}" "${{ github.ref_name }}" "$LOG" > "$RUNNER_TEMP/ci-error.md"
           gh pr comment 1 --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/ci-error.md" || gh issue create --repo "${{ github.repository }}" --title "❌ CI: сборка APK упала" --body-file "$RUNNER_TEMP/ci-error.md" || echo "Диагностика не смогла опубликовать лог (не критично)"
