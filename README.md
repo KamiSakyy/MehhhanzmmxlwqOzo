@@ -10,11 +10,19 @@
 4. Никакие переменные окружения настраивать **не нужно**: Railway автоматически пробрасывает `PORT`, а сервер слушает `0.0.0.0:$PORT`.
 5. После деплоя открой **Settings → Networking → Domains** — там появится адрес вида `https://xxx.up.railway.app`.
 
-## 📲 Как скачать APK (автоматическая сборка в GitHub Actions)
+## 📲 Как скачать APK (прямая ссылка)
 
-1. В репозитории открой вкладку **Actions** → workflow **«🤖 Android CI — автосборка APK»**.
-2. Каждый push в ветку собирает APK автоматически (Gradle + Android SDK уже установлены в CI).
-3. Открой последний успешный run → внизу **Artifacts** → скачай `messenger-apk` (внутри `app-release.apk` — **подписанный**, готовый к установке, и `app-debug.apk`).
+**⬇️ Скачать установочный APK (подписанный, готов к установке):**
+👉 https://github.com/KamiSakyy/MehhhanzmmxlwqOzo/releases/latest/download/app-release.apk
+
+**⬇️ Скачать Debug APK:**
+👉 https://github.com/KamiSakyy/MehhhanzmmxlwqOzo/releases/latest/download/app-debug.apk
+
+**Страница релиза (все версии):** https://github.com/KamiSakyy/MehhhanzmmxlwqOzo/releases
+
+Ссылки `releases/latest/download/...` — **вечные**: каждая новая сборка в CI автоматически обновляет релиз `v1.0.0`, и ссылка всегда отдаёт свежий APK. Работает без входа в GitHub, прямо с телефона.
+
+**Альтернативный способ** (вручную): вкладка **Actions** → workflow **«🤖 Android CI — автосборка APK»** → последний зелёный run → **Artifacts** → `messenger-apk` (zip с обоими APK). Каждый push в ветку собирает APK автоматически (Gradle + Android SDK уже установлены в CI).
 
 ## 💬 Как подключить приложение к серверу
 
