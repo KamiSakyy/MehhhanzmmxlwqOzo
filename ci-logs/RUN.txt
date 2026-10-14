@@ -1,0 +1,13 @@
+run:        38613602097
+commit:     a7b2ad6a68f9853d3a4fc8be8f2ef9bf52750562
+ref:        arena/e3d698e2-mehhhanzmmxlwqozo
+дата(UTC):  2026-10-14T18:15:44Z
+--- артефакты логов ---
+ci-logs/RUN.txt
+ci-logs/core-test-log/classes/com/mehhanz/engine/crypto/NativeCrypto.class
+ci-logs/core-test-log/genkey.log
+ci-logs/core-test-log/javac.log
+ci-logs/core-test-log/native.log
+ci-logs/native-crypto-log/crypto_kat
+ci-logs/native-crypto-log/genkey.log
+ci-logs/native-crypto-log/kat.log

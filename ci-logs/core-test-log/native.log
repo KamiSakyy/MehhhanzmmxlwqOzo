@@ -1,0 +1,33 @@
+=== [1/5] генерация ключа сборки ===
+[genkey] fingerprint=657fba27c34189c4 tag=d062c777ed3fa827
+=== [2/5] KAT криптопримитивов ===
+=== MMX CRYPTO KAT ===
+  [OK]   SHA-256("abc")
+  [OK]   SHA-256("")
+  [OK]   SHA-256(1e6 x 'a')
+  [OK]   HMAC RFC4231 TC1
+  [OK]   HMAC RFC4231 TC2
+  [FAIL] HMAC RFC4231 TC6
+    got:  124c7d2385aa1743aaad12204e3464f06305fd1a6d291250fa564dceffab0c8a
+    want: 60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54
+  [OK]   AES-256 FIPS-197 C.3
+  [OK] AES-256 block round-trip
+  [OK] CBC: 48 -> 64 (PKCS#7)
+  [OK]   CBC block1 (SP800-38A F.2.5)
+  [OK]   CBC block2
+  [OK] CBC round-trip
+  [OK] HKDF детерминирован
+  [OK] Kenc != Kmac
+  [OK] смена соли меняет Kenc
+  [OK] ключ чанка уникален
+  [OK] ключ чанка детерминирован
+  [OK] base64 encode
+  [OK] base64 decode
+  [OK] seal: конверт создан
+  [OK] seal: магия MMXC
+  [OK] open: успешно
+  [OK] open: данные идентичны
+  [OK] open: неверный ключ отвергнут
+  [OK] open: порча отвергнута
+  [OK] seal/open пустого модуля
+=== KAT: 26 проверок, ошибок 1 ===
