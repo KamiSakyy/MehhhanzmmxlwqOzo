@@ -4,10 +4,12 @@ plugins {
 
 // Keystore is generated automatically in CI (GitHub Actions) and passed via
 // environment variables. No secrets or manual configuration are required.
-def keystorePath = System.getenv("KEYSTORE_PATH")
-def keystorePassword = System.getenv("KEYSTORE_PASSWORD")
-def keyAliasEnv = System.getenv("KEY_ALIAS")
-def keyPassword = System.getenv("KEY_PASSWORD")
+// NOTE: variable names use the "ks" prefix on purpose — they must NOT shadow
+// the signingConfigs DSL method names (storePassword, keyAlias, keyPassword...).
+def ksPath = System.getenv("KEYSTORE_PATH")
+def ksStorePass = System.getenv("KEYSTORE_PASSWORD")
+def ksAlias = System.getenv("KEY_ALIAS")
+def ksKeyPass = System.getenv("KEY_PASSWORD")
 
 android {
     namespace "com.messenger.chat"
@@ -23,18 +25,18 @@ android {
 
     signingConfigs {
         release {
-            if (keystorePath != null) {
-                storeFile file(keystorePath)
-                storePassword keystorePassword
-                keyAlias keyAliasEnv
-                keyPassword keyPassword
+            if (ksPath != null) {
+                storeFile file(ksPath)
+                storePassword ksStorePass
+                keyAlias ksAlias
+                keyPassword ksKeyPass
             }
         }
     }
 
     buildTypes {
         release {
-            if (keystorePath != null) {
+            if (ksPath != null) {
                 signingConfig signingConfigs.release
             }
             minifyEnabled false
