@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material You / Material 3 dark palette -->
+    <color name="md_theme_primary">#D0BCFF</color>
+    <color name="md_theme_onPrimary">#381E72</color>
+    <color name="md_theme_primaryContainer">#4F378A</color>
+    <color name="md_theme_onPrimaryContainer">#EADDFF</color>
+    <color name="md_theme_secondary">#CCC2DC</color>
+    <color name="md_theme_onSecondary">#332D41</color>
+    <color name="md_theme_secondaryContainer">#4A4458</color>
+    <color name="md_theme_onSecondaryContainer">#E8DEF8</color>
+    <color name="md_theme_tertiary">#EFB8C8</color>
+    <color name="md_theme_onTertiary">#492532</color>
+    <color name="md_theme_tertiaryContainer">#633B48</color>
+    <color name="md_theme_onTertiaryContainer">#FFD8E4</color>
+    <color name="md_theme_error">#F2B8B5</color>
+    <color name="md_theme_onError">#601410</color>
+    <color name="md_theme_errorContainer">#8C1D18</color>
+    <color name="md_theme_onErrorContainer">#F9DEDC</color>
+    <color name="md_theme_background">#141218</color>
+    <color name="md_theme_onBackground">#E6E1E5</color>
+    <color name="md_theme_surface">#141218</color>
+    <color name="md_theme_onSurface">#E6E1E5</color>
+    <color name="md_theme_surfaceVariant">#49454F</color>
+    <color name="md_theme_onSurfaceVariant">#CAC4D0</color>
+    <color name="md_theme_outline">#938F99</color>
+    <color name="md_theme_outlineVariant">#49454F</color>
+    <color name="md_theme_inverseSurface">#E6E1E5</color>
+    <color name="md_theme_inverseOnSurface">#313033</color>
+    <color name="md_theme_inversePrimary">#6750A4</color>
+    <color name="md_theme_surfaceTint">#D0BCFF</color>
+
+    <!-- Chat colors -->
+    <color name="chat_bg">#141218</color>
+    <color name="bubble_sent">#6750A4</color>
+    <color name="bubble_sent_text">#FFFFFF</color>
+    <color name="bubble_received">#2B2730</color>
+    <color name="bubble_received_text">#E6E1E5</color>
+    <color name="online_green">#4ADE80</color>
+
+    <!-- Login screen gradient (cosmic 2026 style) -->
+    <color name="login_gradient_start">#0F0C29</color>
+    <color name="login_gradient_mid">#302B63</color>
+    <color name="login_gradient_end">#24243E</color>
+</resources>

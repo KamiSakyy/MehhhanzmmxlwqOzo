@@ -1,0 +1,64 @@
+name: 🤖 Android CI — автосборка APK
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Сборка APK (Release + Debug)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: ☕ Установка Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 🤖 Установка Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 📦 Установка компонентов SDK (API 36)
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: 🐘 Установка Gradle 8.14.3
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      - name: 🔑 Генерация ключа подписи (keystore)
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/messenger-release.keystore" \
+            -alias messenger \
+            -keyalg RSA -keysize 2048 -validity 10950 \
+            -storepass messenger2026 -keypass messenger2026 \
+            -dname "CN=Messenger2026, OU=Chat, O=Arena, L=Paris, ST=IDF, C=FR"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/messenger-release.keystore" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=messenger2026" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=messenger" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=messenger2026" >> "$GITHUB_ENV"
+
+      - name: 🏗️ Сборка Release APK (подписанный)
+        working-directory: android
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: 🏗️ Сборка Debug APK
+        working-directory: android
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: 📤 Загрузка APK в артефакты
+        uses: actions/upload-artifact@v4
+        with:
+          name: messenger-apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30

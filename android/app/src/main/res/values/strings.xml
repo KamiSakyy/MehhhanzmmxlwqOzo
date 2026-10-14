@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Мессенджер</string>
+    <string name="default_server_url">wss://messenger-production.up.railway.app</string>
+
+    <string name="login_title">Мессенджер 2026</string>
+    <string name="login_subtitle">Общение в реальном времени</string>
+    <string name="hint_username">Имя пользователя</string>
+    <string name="hint_server">Адрес сервера</string>
+    <string name="login_button">Войти в чат</string>
+    <string name="login_footer">WebSocket • Реальное время • Сделано в 2026</string>
+
+    <string name="hint_message">Сообщение…</string>
+    <string name="send">Отправить</string>
+</resources>
