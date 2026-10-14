@@ -1,5 +1,13 @@
 # 📱 Мессенджер 2026 — Android (Java + XML) + WebSocket-сервер + Docker/Railway
 
+> ## 🛰️ ОСНОВНОЙ ПРОЕКТ — Handoff: Telegram-FOSS (DrKLO) на нашем сервере
+> Исходник официального Telegram от DrKLO в `handoff/` с правками существующих файлов:
+> вход/регистрация по **@username + паролю** на нашем сервере (`https://mwmmw-production.up.railway.app/`),
+> **MTProto отключён** (ни одного API-вызова Telegram), пакет **`com.ts.telegram`**, версия **13.1.0**,
+> **arm64**, только **Release**. APK собирается автоматически и всегда попадает в **`handoff/apk/`**.
+> **⬇️ Скачать APK:** https://github.com/KamiSakyy/MehhhanzmmxlwqOzo/releases/latest/download/Telegram-FOSS-v13.1.0-arm64.apk
+> Подробности — в `handoff/README.md`.
+
 Полноценный мессенджер: Android-приложение на **Java + XML** (Material You / Material 3, API 28–36, дизайн 2026) и сервер на **Node.js (WebSocket)** с **Dockerfile** для мгновенного деплоя на **Railway** — без переменных, без консоли, без ПК.
 
 ## 🚀 Деплой на Railway (1 клик, всё автоматически)

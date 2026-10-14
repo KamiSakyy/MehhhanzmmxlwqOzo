@@ -16,3 +16,6 @@ server/node_modules/
 *.iml
 .vscode/
 .DS_Store
+
+# Handoff: загруженные медиа-файлы сервера (не коммитим)
+server/uploads/

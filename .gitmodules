@@ -1,0 +1,3 @@
+[submodule "handoff/Telegram-FOSS"]
+	path = handoff/Telegram-FOSS
+	url = https://github.com/DrKLO/Telegram.git
