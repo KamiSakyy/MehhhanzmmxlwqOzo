@@ -2928,7 +2928,6 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
         }
 
-        @Override
         // ===== HANDOFF: экран входа по @username + паролю на нашем сервере =====
         private void handoffInitViews() {
             if (handoffUiReady) {
@@ -3063,6 +3062,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         }
         // ===== /HANDOFF =====
 
+        @Override
         public void onNextPressed(String code) {
             // ===== HANDOFF: вместо номера телефона — вход/регистрация по @username + паролю на нашем сервере =====
             if (handoffUsernameField != null) {
