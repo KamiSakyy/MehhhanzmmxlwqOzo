@@ -164,7 +164,6 @@ add_library(${NATIVE_LIB} SHARED
         intro/IntroRenderer.c
         SqliteWrapper.cpp
         utilities.cpp
-        gifvideo.cpp
         lottie.cpp
         TgNetWrapper.cpp
         ffmpeg_jni.cc
