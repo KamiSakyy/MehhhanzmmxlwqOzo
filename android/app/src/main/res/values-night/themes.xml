@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MehhanzStudio" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/mmx_accent</item>
+        <item name="android:colorPrimaryDark">#FF000000</item>
+        <item name="android:colorAccent">@color/mmx_accent</item>
+        <item name="android:windowBackground">#FF07090C</item>
+        <item name="android:statusBarColor">#FF07090C</item>
+        <item name="android:navigationBarColor">#FF07090C</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorPrimary">@color/mmx_text</item>
+        <item name="android:textColorSecondary">@color/mmx_text_dim</item>
+        <item name="android:colorControlActivated">@color/mmx_accent</item>
+    </style>
+</resources>

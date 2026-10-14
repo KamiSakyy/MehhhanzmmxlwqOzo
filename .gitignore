@@ -1,0 +1,18 @@
+# --- сборочные каталоги ---
+build/
+.gradle/
+ci-out/
+local.properties
+.idea/
+*.iml
+out/
+target/
+
+# --- СГЕНЕРИРОВАННЫЙ МАСТЕР-КЛЮЧ (никогда в git!) ---
+android/app/src/main/cpp/generated/
+*.keystore
+keystore.properties
+
+# --- системное ---
+.DS_Store
+*.log

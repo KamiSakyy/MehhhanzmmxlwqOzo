@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/mmx_bg" />
+    <item android:gravity="center">
+        <shape android:shape="oval">
+            <size android:width="120dp" android:height="120dp" />
+            <gradient android:startColor="@color/mmx_accent" android:endColor="@color/mmx_accent2" android:type="sweep" />
+            <stroke android:width="2dp" android:color="#55FFFFFF" />
+        </shape>
+    </item>
+</layer-list>

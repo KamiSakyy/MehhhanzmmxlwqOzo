@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Механц Студия</string>
+    <string name="engine_name">MMX Engine</string>
+    <string name="lang_name">MOCHI</string>
+    <string name="btn_new_project">Новый проект</string>
+    <string name="btn_open_project">Открыть</string>
+    <string name="btn_run">Запустить</string>
+    <string name="btn_build_apk">Собрать APK</string>
+    <string name="btn_compile">Собрать</string>
+    <string name="btn_save">Сохранить</string>
+    <string name="status_ready">Готово</string>
+    <string name="status_compiled">Байткод собран</string>
+    <string name="status_error">Ошибка</string>
+    <string name="native_ok">Нативное ядро исправно</string>
+    <string name="native_fail">Нативное ядро не прошло самотест</string>
+    <string name="offline_note">Полностью оффлайн: компиляция и сборка APK на устройстве</string>
+</resources>

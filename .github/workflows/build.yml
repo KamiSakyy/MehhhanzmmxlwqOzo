@@ -1,0 +1,81 @@
+# ============================================================================
+#  MMX ENGINE CI — вся сборка идёт ТОЛЬКО здесь (GitHub Actions).
+#  Результат: подписанный APK (<= 3 МиБ) в handoff/, демо-модули .c,
+#  лог нативного открытия модуля, отчёты тестов.
+# ============================================================================
+name: MMX Engine CI
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+concurrency:
+  group: mmx-ci-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: write
+env:
+  JAVA_VERSION: '17'
+  GRADLE_VERSION: '8.13'
+jobs:
+  native-crypto:
+    name: 'Native crypto KAT (Java<->C++)'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: 'KAT + кросс-проверка'
+        run: bash tools/ci/run_native_crypto_test.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: native-crypto-log, path: ci-out/native/, if-no-files-found: ignore }
+  core-tests:
+    name: 'MMX engine tests'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: 'Тесты ядра языка и крипто-конвейера'
+        run: bash tools/ci/run_core_tests.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: core-test-log, path: ci-out/core/, if-no-files-found: ignore }
+  apk:
+    name: 'Build APK (API 28..36)'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [native-crypto, core-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: 'Android SDK / NDK / CMake'
+        run: bash tools/ci/setup_android.sh
+      - name: 'Ключ подписи + печать сертификата'
+        run: bash tools/ci/gen_keystore.sh
+      - name: 'Мастер-ключ шифрования .c модулей (только в .so)'
+        run: python3 tools/ci/genkey.py
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.13', cache-read-only: false }
+      - name: 'Gradle: assembleRelease'
+        run: bash tools/ci/build_apk.sh
+      - name: 'Проверка APK: подпись, манифест, размер'
+        run: bash tools/ci/verify_apk.sh
+      - name: 'Демо-экспорт .c + нативное открытие'
+        run: bash tools/ci/make_demo_export.sh
+      - name: 'Публикация в handoff/'
+        run: bash tools/ci/publish_handoff.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mehhanz-studio-apk
+          path: |
+            handoff/*.apk
+            handoff/**/*.c
+            handoff/**/*.key
+            handoff/**/*.mmxsrc
+            handoff/**/*.txt
+            handoff/**/*.md
+          if-no-files-found: warn

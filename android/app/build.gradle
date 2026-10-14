@@ -1,0 +1,97 @@
+// ============================================================================
+//  MEHHANZ MMX STUDIO — модуль приложения и движка.
+//  minSdk 28 (Android 9), target/compile SDK 36 (Android 16).
+//  Без AndroidX/Compose: только системные API -> APK <= 3 МиБ.
+// ============================================================================
+plugins { id 'com.android.application' }
+
+def mmxVersionCode = (project.findProperty('mmxVersionCode') ?: '1').toString().toInteger()
+def mmxVersionName = (project.findProperty('mmxVersionName') ?: '1.0').toString()
+def ksProps = new Properties()
+def ksFile = rootProject.file('keystore.properties')
+def hasReleaseKey = ksFile.exists()
+
+android {
+    namespace 'com.mehhanz.studio'
+    compileSdk 36
+    buildToolsVersion = '36.0.0'
+
+    defaultConfig {
+        applicationId 'com.mehhanz.studio'
+        minSdk 28
+        targetSdk 36
+        versionCode mmxVersionCode
+        versionName mmxVersionName
+        resourceConfigurations += ['ru', 'en']
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DMMX_CI=ON'
+                cppFlags '-std=c++17'
+            }
+        }
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                ksProps.load(new FileInputStream(ksFile))
+                storeFile rootProject.file(ksProps['storeFile'])
+                storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']
+                keyPassword ksProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+        }
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+        resources {
+            excludes += ['META-INF/*.version', 'META-INF/*.kotlin_module', '**/*.txt']
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    // модули .c не сжимаем — читаем потоково
+    androidResources {
+        noCompress += ['c', 'mmxsrc', 'mochi']
+    }
+
+    ndkVersion System.getenv('MMX_NDK_VERSION') ?: '27.0.12077973'
+}
+
+dependencies {
+    // Намеренно без внешних зависимостей: всё своё, APK лёгкий и оффлайн.
+}
