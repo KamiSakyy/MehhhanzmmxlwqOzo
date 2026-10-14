@@ -75,6 +75,15 @@ jobs:
             android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
+      - name: 🚀 Публикация APK в Releases (прямая ссылка для скачивания)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v1.0.0 --repo "${{ github.repository }}" --title "📱 Мессенджер 2026 v1.0.0" --notes "Автосборка из CI. app-release.apk — подписанный, готов к установке." || true
+          gh release upload v1.0.0 android/app/build/outputs/apk/release/*.apk android/app/build/outputs/apk/debug/*.apk --repo "${{ github.repository }}" --clobber
+          echo "Прямая ссылка: https://github.com/${{ github.repository }}/releases/latest/download/app-release.apk"
+
       - name: 🩺 Диагностика — лог ошибки сборки (аннотации + комментарий в PR)
         if: failure()
         env:
