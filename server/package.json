@@ -11,6 +11,8 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@tgsnake/bytesio": "^2.0.1",
+    "@tgsnake/skema": "^2.4.0",
     "ws": "^8.18.0"
   }
 }

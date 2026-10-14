@@ -13,6 +13,18 @@ const fs = require("fs");
 const path = require("path");
 const { WebSocketServer, WebSocket } = require("ws");
 
+// TL-мост: наш сервер говорит с клиентом Telegram на родном TL-протоколе (через @tgsnake/skema)
+let Skema = null;
+let BytesIO = null;
+try {
+  Skema = require("@tgsnake/skema");
+  BytesIO = require("@tgsnake/bytesio").BytesIO;
+} catch (e) {
+  console.log("⚠️ TL bridge отключён: @tgsnake/skema не установлен");
+}
+const TL = Skema ? Skema.Raw : null;
+const TLObject = Skema ? Skema.TLObject : null;
+
 const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
 const UPLOAD_DIR = path.join(__dirname, "uploads");
@@ -30,6 +42,7 @@ const clients = new Map();  // WebSocket -> { username }
 let chatSeq = 1;
 let msgSeq = 1;
 let fileSeq = 1;
+let nextUid = 1001;
 
 // ---------- утилиты ----------
 function pad(n) {
@@ -221,6 +234,134 @@ function getToken(req) {
   }
 }
 
+// ---------- TL bridge: клиент Telegram (исходник DrKLO) -> наш сервер, родной TL ----------
+async function tlUnwrap(obj) {
+  let guard = 0;
+  while (obj && guard++ < 10) {
+    if (obj.className === "InvokeWithLayer" || obj.className === "InitConnection") {
+      obj = obj.query;
+      continue;
+    }
+    if (obj.className === "GzipPacked") {
+      if (obj.packedData && obj.packedData.className) {
+        obj = obj.packedData;
+      } else {
+        const buf = Buffer.isBuffer(obj.packedData) ? obj.packedData : Buffer.from(obj.packedData || []);
+        obj = await TLObject.read(BytesIO.from(buf));
+      }
+      continue;
+    }
+    break;
+  }
+  return obj;
+}
+
+function tlUserFromRecord(u, selfUsername) {
+  return new TL.User({
+    id: BigInt(u.uid),
+    self: u.username === selfUsername,
+    contact: false,
+    mutualContact: false,
+    deleted: false,
+    bot: false,
+    botChatHistory: false,
+    botNochats: false,
+    verified: false,
+    restricted: false,
+    min: false,
+    botInlineGeo: false,
+    support: false,
+    scam: false,
+    applyMinPhoto: false,
+    firstName: u.name || u.username,
+    lastName: "",
+    username: u.username.replace(/^@/, ""),
+    phone: "",
+    accessHash: u.accessHash
+  });
+}
+
+const tlHandlers = {
+  "help.GetConfig": async (req, ctx) => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    return new TL.Config({
+      defaultP2pContacts: false,
+      preloadFeaturedStickers: false,
+      revokePmInbox: false,
+      blockedMode: false,
+      forceTryIpv6: false,
+      date: nowSec,
+      expires: nowSec + 86400,
+      testMode: false,
+      thisDc: 1,
+      dcOptions: [],
+      dcTxtDomainName: "",
+      chatSizeMax: 200,
+      megagroupSizeMax: 200000,
+      forwardedCountMax: 100,
+      onlineUpdatePeriodMs: 10000,
+      offlineBlurTimeoutMs: 5000,
+      offlineIdleTimeoutMs: 10000,
+      onlineCloudTimeoutMs: 30000,
+      notifyCloudDelayMs: 1000,
+      notifyDefaultDelayMs: 25000,
+      pushChatPeriodMs: 60000,
+      pushChatLimit: 10,
+      editTimeLimit: 86400,
+      revokeTimeLimit: 86400,
+      revokePmTimeLimit: 86400,
+      ratingEDecay: 1,
+      stickersRecentLimit: 20,
+      channelsReadMediaPeriod: 604800,
+      callReceiveTimeoutMs: 20000,
+      callRingTimeoutMs: 30000,
+      callConnectTimeoutMs: 30000,
+      callPacketTimeoutMs: 10000,
+      meUrlPrefix: "https://mwmmw-production.up.railway.app/",
+      captionLengthMax: 1024,
+      messageLengthMax: 4096,
+      webfileDcId: 1
+    });
+  },
+  "updates.GetState": async (req, ctx) => {
+    return new TL.updates.State({
+      pts: 0,
+      qts: 0,
+      date: Math.floor(Date.now() / 1000),
+      seq: 0,
+      unreadCount: 0
+    });
+  },
+  "users.GetUsers": async (req, ctx) => {
+    const list = [];
+    for (const u of users.values()) {
+      list.push(tlUserFromRecord(u, ctx.user ? ctx.user.username : null));
+    }
+    return new TL.users.Users({ users: list });
+  }
+};
+
+async function tlDispatch(bodyBuffer, ctx) {
+  const stream = BytesIO.from(bodyBuffer);
+  let obj = await TLObject.read(stream);
+  obj = await tlUnwrap(obj);
+  if (!obj || !obj.className) {
+    return new TL.RpcError({ errorCode: 400, errorMessage: "TL: empty request" }).write();
+  }
+  const handler = tlHandlers[obj.className];
+  if (!handler) {
+    console.log("🔀 TL " + obj.className + " — нет обработчика, отвечаем RpcError");
+    return new TL.RpcError({ errorCode: 400, errorMessage: "TL: method not implemented: " + obj.className }).write();
+  }
+  try {
+    const result = await handler(obj, ctx);
+    return result.write();
+  } catch (e) {
+    console.log("🔀 TL " + obj.className + " error: " + (e.message || e));
+    return new TL.RpcError({ errorCode: 500, errorMessage: "TL: " + (e.message || e) }).write();
+  }
+}
+
 // ---------- HTTP server ----------
 const server = http.createServer(async (req, res) => {
   const url = (req.url || "/").split("?")[0];
@@ -247,8 +388,11 @@ const server = http.createServer(async (req, res) => {
       hash: hashPassword(password, salt),
       token: makeToken(),
       name: name || username,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      uid: nextUid,
+      accessHash: BigInt(100000000 + nextUid)
     };
+    nextUid++;
     users.set(username, user);
     console.log("📝 зарегистрирован " + username);
     return sendJson(res, 200, { ok: true, token: user.token, username: user.username, name: user.name });
@@ -357,6 +501,33 @@ const server = http.createServer(async (req, res) => {
       "Content-Disposition": 'inline; filename="' + file.name + '"'
     });
     fs.createReadStream(file.path).pipe(res);
+    return;
+  }
+
+  // TL bridge: бинарный TL-запрос клиента Telegram -> бинарный TL-ответ нашего сервера
+  if (url === "/api/tl" && req.method === "POST") {
+    if (!TL) {
+      res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: "TL bridge disabled" }));
+      return;
+    }
+    const user = findUserByToken(getToken(req));
+    let body;
+    try {
+      body = await readRawBody(req);
+    } catch (e) {
+      res.writeHead(413, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: "too large" }));
+      return;
+    }
+    try {
+      const out = await tlDispatch(body, { user: user });
+      res.writeHead(200, { "Content-Type": "application/x-telegram-tl" });
+      res.end(out);
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+    }
     return;
   }
 
