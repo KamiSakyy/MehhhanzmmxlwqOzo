@@ -1,0 +1,186 @@
+name: 🤖 Android CI — автосборка APK
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  build-apk:
+    name: Сборка APK (Debug + Release)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: ☕ Установка Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 📦 Установка компонентов Android SDK (API 36) — SDK уже предустановлен в GitHub Actions
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -f "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager)"; fi
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: 🐘 Установка Gradle 8.14.3
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      - name: 🔑 Генерация ключа подписи (keystore)
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/messenger-release.keystore" \
+            -alias messenger \
+            -keyalg RSA -keysize 2048 -validity 10950 \
+            -storepass messenger2026 -keypass messenger2026 \
+            -dname "CN=Messenger2026, OU=Chat, O=Arena, L=Paris, ST=IDF, C=FR"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/messenger-release.keystore" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=messenger2026" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=messenger" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=messenger2026" >> "$GITHUB_ENV"
+
+      - name: 🏗️ Сборка Debug APK (первой — отделяет ошибки кода от ошибок подписи)
+        working-directory: android
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --stacktrace 2>&1 | tee "$RUNNER_TEMP/debug-build.log"
+
+      - name: 🏗️ Сборка Release APK (подписанный)
+        working-directory: android
+        run: |
+          set -o pipefail
+          gradle :app:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/release-build.log"
+
+      - name: 📤 Загрузка APK в артефакты
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: messenger-apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: 🚀 Публикация APK в Releases (прямая ссылка для скачивания)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v1.0.0 --repo "${{ github.repository }}" --title "📱 Мессенджер 2026 v1.0.0" --notes "Автосборка из CI. app-release.apk — подписанный, готов к установке." || true
+          gh release upload v1.0.0 android/app/build/outputs/apk/release/*.apk android/app/build/outputs/apk/debug/*.apk --repo "${{ github.repository }}" --clobber
+          echo "Прямая ссылка: https://github.com/${{ github.repository }}/releases/latest/download/app-release.apk"
+
+      - name: 🩺 Диагностика — лог ошибки сборки (аннотации + комментарий в PR)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG=""
+          for f in "$RUNNER_TEMP/debug-build.log" "$RUNNER_TEMP/release-build.log"; do
+            if [ -f "$f" ]; then
+              LOG="$LOG$(printf '\n===== %s =====\n' "$f")$(tail -150 "$f")"
+            fi
+          done
+          SAN=$(printf '%s' "$LOG" | sed 's/%/%25/g; s/\r/%0D/g')
+          if printf '%s\n' "$SAN" | grep -q "FAILURE: Build failed"; then
+            printf '%s\n' "$SAN" | grep -B2 -A 25 "FAILURE: Build failed" | while IFS= read -r line; do echo "::error::$line"; done
+          else
+            printf '%s\n' "$SAN" | tail -40 | while IFS= read -r line; do echo "::error::$line"; done
+          fi
+          printf '### ❌ CI: сборка APK упала\n\n**Коммит:** `%s`\n**Ветка:** `%s`\n\n<details><summary>Лог сборки (хвост)</summary>\n\n```\n%s\n```\n\n</details>\n' "${{ github.sha }}" "${{ github.ref_name }}" "$LOG" > "$RUNNER_TEMP/ci-error.md"
+          gh pr comment 1 --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/ci-error.md" || gh issue create --repo "${{ github.repository }}" --title "❌ CI: сборка APK упала" --body-file "$RUNNER_TEMP/ci-error.md" || echo "Диагностика не смогла опубликовать лог (не критично)"
+
+  build-telegram-foss:
+    name: 🛰️ Telegram-FOSS (DrKLO) → handoff/apk — только Release, arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    if: github.event_name == 'workflow_dispatch' || contains(toJSON(github.event.head_commit), 'handoff') || contains(toJSON(github.event.head_commit), '.gitmodules') || contains(toJSON(github.event.head_commit), 'server') || contains(toJSON(github.event.head_commit), 'workflows')
+    steps:
+      - name: 📥 Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: 📦 Клонировать Telegram-FOSS (DrKLO) в handoff/Telegram-FOSS — только исходник+градле, глубина 1
+        run: |
+          git submodule update --init --depth 1 handoff/Telegram-FOSS
+          git -C handoff/Telegram-FOSS sparse-checkout set --skip-checks TMessagesProj TMessagesProj_App TMessagesProj_Modules buildSrc gradle gradlew gradlew.bat settings.gradle build.gradle gradle.properties LICENSE
+          git -C handoff/Telegram-FOSS submodule update --init --depth 1 TMessagesProj/jni/tlottie TMessagesProj/jni/third_party/libyuv TMessagesProj/jni/third_party/boringssl TMessagesProj/jni/third_party/xiph/ogg TMessagesProj/jni/third_party/xiph/opus TMessagesProj/jni/third_party/xiph/opusfile TMessagesProj/jni/third_party/boost-regex TMessagesProj/jni/third_party/libprisma TMessagesProj/jni/third_party/libvpx TMessagesProj/jni/third_party/dav1d TMessagesProj/jni/third_party/ffmpeg TMessagesProj/jni/td TMessagesProj/lib/jlatexmath TMessagesProj_Modules/media
+
+      - name: 🩹 Применить наши правки исходника (handoff/overrides → существующие файлы)
+        run: |
+          cp -r handoff/overrides/. handoff/Telegram-FOSS/
+          cd handoff/Telegram-FOSS && git diff --stat | tail -10 || true
+
+      - name: ☕ Установка Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 📦 Android SDK + NDK 27.2.12479018 + CMake (SDK предустановлен в CI)
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -f "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager)"; fi
+          yes | "$SDKMANAGER" --licenses
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.2.12479018" "cmake;3.22.1"
+
+      - name: 🏗️ Сборка Telegram-FOSS — ТОЛЬКО Release, arm64 (без debug, без проверок, без эмуляторов)
+        working-directory: handoff/Telegram-FOSS
+        run: |
+          set -o pipefail
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/tg-build.log"
+
+      - name: 📁 APK → handoff/apk (всегда сюда, не в tmp)
+        run: |
+          mkdir -p handoff/apk
+          cp handoff/Telegram-FOSS/TMessagesProj_App/build/outputs/apk/afat/release/app.apk handoff/apk/Telegram-FOSS-v13.1.0-arm64.apk
+          ls -la handoff/apk/
+          du -h handoff/apk/Telegram-FOSS-v13.1.0-arm64.apk
+
+      - name: 📤 Артефакт + публикация в Releases (прямая ссылка)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v1.0.0 --repo "${{ github.repository }}" --title "📱 Мессенджер 2026 v1.0.0" --notes "Telegram-FOSS (DrKLO), пакет com.ts.telegram, вход по @username+паролю на нашем сервере, MTProto отключён. APK: Telegram-FOSS-v13.1.0-arm64.apk" || true
+          gh release upload v1.0.0 handoff/apk/Telegram-FOSS-v13.1.0-arm64.apk --repo "${{ github.repository }}" --clobber
+          echo "Прямая ссылка: https://github.com/${{ github.repository }}/releases/latest/download/Telegram-FOSS-v13.1.0-arm64.apk"
+
+      - name: 📦 Загрузка APK артефактом
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: handoff-telegram-apk
+          path: handoff/apk/*.apk
+          retention-days: 30
+
+      - name: 🩺 Диагностика — лог сборки в аннотации + комментарий в PR
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG=""
+          if [ -f "$RUNNER_TEMP/tg-build.log" ]; then
+            LOG="$(tail -150 "$RUNNER_TEMP/tg-build.log")"
+          fi
+          SAN=$(printf '%s' "$LOG" | sed 's/%/%25/g; s/\r/%0D/g')
+          if printf '%s\n' "$SAN" | grep -q "FAILURE: Build failed"; then
+            printf '%s\n' "$SAN" | grep -B2 -A 25 "FAILURE: Build failed" | while IFS= read -r line; do echo "::error::$line"; done
+          else
+            printf '%s\n' "$SAN" | tail -40 | while IFS= read -r line; do echo "::error::$line"; done
+          fi
+          printf '### ❌ CI: сборка Telegram-FOSS упала\n\n**Коммит:** `%s`\n\n<details><summary>Лог (хвост)</summary>\n\n```\n%s\n```\n\n</details>\n' "${{ github.sha }}" "$LOG" > "$RUNNER_TEMP/ci-error.md"
+          gh pr comment 1 --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/ci-error.md" || gh issue create --repo "${{ github.repository }}" --title "❌ CI: сборка Telegram-FOSS упала" --body-file "$RUNNER_TEMP/ci-error.md" || echo "Диагностика не смогла опубликовать лог (не критично)"

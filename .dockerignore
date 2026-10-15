@@ -1,0 +1,6 @@
+.git
+.gitignore
+.github
+android
+*.md
+server/node_modules

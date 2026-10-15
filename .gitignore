@@ -1,0 +1,21 @@
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.ap_
+*.keystore
+*.jks
+
+# Server
+server/node_modules/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Handoff: загруженные медиа-файлы сервера (не коммитим)
+server/uploads/

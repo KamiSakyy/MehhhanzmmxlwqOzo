@@ -1,0 +1,62 @@
+plugins {
+    id("com.android.application")
+}
+
+// Keystore is generated automatically in CI (GitHub Actions) and passed via
+// environment variables. No secrets or manual configuration are required.
+// NOTE: variable names use the "ks" prefix on purpose — they must NOT shadow
+// the signingConfigs DSL method names (storePassword, keyAlias, keyPassword...).
+def ksPath = System.getenv("KEYSTORE_PATH")
+def ksStorePass = System.getenv("KEYSTORE_PASSWORD")
+def ksAlias = System.getenv("KEY_ALIAS")
+def ksKeyPass = System.getenv("KEY_PASSWORD")
+
+android {
+    namespace "com.messenger.chat"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.messenger.chat"
+        minSdk 28
+        targetSdk 36
+        versionCode 1
+        versionName "1.0"
+    }
+
+    signingConfigs {
+        release {
+            if (ksPath != null) {
+                storeFile file(ksPath)
+                storePassword ksStorePass
+                keyAlias ksAlias
+                keyPassword ksKeyPass
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (ksPath != null) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled false
+        }
+        debug {
+            applicationIdSuffix ".debug"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.2.1")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
+    implementation("androidx.core:core:1.16.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}
