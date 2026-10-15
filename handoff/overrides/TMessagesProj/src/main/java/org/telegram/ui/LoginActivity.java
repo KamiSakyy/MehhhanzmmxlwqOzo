@@ -1359,22 +1359,25 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             JSONObject result = null;
             String error = null;
             HttpURLConnection conn = null;
+            String baseUsed = null;
             try {
                 String base = server;
                 while (base.endsWith("/")) {
                     base = base.substring(0, base.length() - 1);
                 }
+                baseUsed = base;
                 JSONObject body = new JSONObject();
                 body.put("username", username);
                 body.put("password", password);
                 if (register && username != null) {
                     body.put("name", username);
                 }
-                conn = (HttpURLConnection) new URL(base + (register ? "/api/register" : "/api/login")).openConnection();
+                final String requestUrl = base + (register ? "/api/register" : "/api/login");
+                conn = (HttpURLConnection) new URL(requestUrl).openConnection();
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                conn.setConnectTimeout(15000);
-                conn.setReadTimeout(15000);
+                conn.setConnectTimeout(30000);
+                conn.setReadTimeout(30000);
                 conn.setDoOutput(true);
                 OutputStream os = conn.getOutputStream();
                 os.write(body.toString().getBytes("UTF-8"));
@@ -1398,7 +1401,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                     error = json.optString("error", "Ошибка сервера");
                 }
             } catch (Exception e) {
-                error = "Ошибка сети: " + e.getMessage();
+                error = "Ошибка сети: " + e.getMessage() + "\n" + (baseUsed == null ? "" : baseUsed);
             } finally {
                 if (conn != null) {
                     conn.disconnect();
@@ -3084,6 +3087,18 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                 titleView.setText(handoffRegisterMode ? "Регистрация" : "Вход по @username");
                 handoffStatusView.setVisibility(View.GONE);
             });
+
+            TextView handoffTestView = new TextView(ctx);
+            handoffTestView.setText("Проверить соединение");
+            handoffTestView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+            handoffTestView.setTextColor(0xFF2481CC);
+            handoffTestView.setGravity(Gravity.CENTER);
+            handoffTestView.setPadding(0, dp(12), 0, dp(12));
+            addView(handoffTestView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 16, 0, 16, 0));
+            handoffTestView.setOnClickListener(v -> {
+                String serverForTest = HandoffBridge.normalizeServer(handoffServerField.getText() == null ? "" : handoffServerField.getText().toString());
+                handoffTestConnection(serverForTest);
+            });
         }
 
         private void handoffStyleField(EditTextBoldCursor field) {
@@ -3099,6 +3114,53 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             handoffStatusView.setVisibility(View.VISIBLE);
         }
 
+        /**
+         * HANDOFF: «Проверить соединение» — стучимся в /health нашего сервера и показываем ответ,
+         * чтобы сразу видеть, доступен ли сервер и по какому именно адресу.
+         */
+        private void handoffTestConnection(final String server) {
+            handoffStatusView.setTextColor(0xFF8A8A8E);
+            handoffStatusView.setText("Проверяю " + server + " …");
+            handoffStatusView.setVisibility(View.VISIBLE);
+            new Thread(() -> {
+                String info;
+                boolean ok = false;
+                HttpURLConnection conn = null;
+                try {
+                    conn = (HttpURLConnection) new URL(server + "/health").openConnection();
+                    conn.setRequestMethod("GET");
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(15000);
+                    int code = conn.getResponseCode();
+                    InputStream is = code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream();
+                    StringBuilder sb = new StringBuilder();
+                    if (is != null) {
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            sb.append(line);
+                        }
+                        is.close();
+                    }
+                    ok = code == 200;
+                    info = "HTTP " + code + " — " + sb.toString();
+                } catch (Exception e) {
+                    info = e.getMessage();
+                } finally {
+                    if (conn != null) {
+                        conn.disconnect();
+                    }
+                }
+                final boolean finalOk = ok;
+                final String finalInfo = (ok ? "✅ " : "❌ ") + server + "\n" + info;
+                AndroidUtilities.runOnUIThread(() -> {
+                    handoffStatusView.setTextColor(finalOk ? 0xFF4CAF50 : 0xFFE53935);
+                    handoffStatusView.setText(finalInfo);
+                    handoffStatusView.setVisibility(View.VISIBLE);
+                });
+            }).start();
+        }
+
         private void handoffSubmit() {
             if (handoffLoading) {
                 return;
@@ -3107,7 +3169,9 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             if (ctx == null || handoffUsernameField == null) {
                 return;
             }
-            final String server = handoffServerField.getText() == null ? "" : handoffServerField.getText().toString().trim();
+            // HANDOFF: «mwmmw-production.up.railway.app» -> «https://mwmmw-production.up.railway.app»,
+            // пусто / «/» -> адрес по умолчанию. Иначе URL получится «/api/login» и упадёт с «no protocol».
+            final String server = HandoffBridge.normalizeServer(handoffServerField.getText() == null ? "" : handoffServerField.getText().toString());
             String username = handoffUsernameField.getText() == null ? "" : handoffUsernameField.getText().toString().trim().toLowerCase();
             final String password = handoffPasswordField.getText() == null ? "" : handoffPasswordField.getText().toString();
             if (server.isEmpty()) {

@@ -1,6 +1,10 @@
 name: 🔍 Проверка боевого сервера
 
 on:
+  push:
+    paths:
+      - "test/probe-production.js"
+      - ".github/workflows/probe.yml"
   workflow_dispatch:
     inputs:
       server:
