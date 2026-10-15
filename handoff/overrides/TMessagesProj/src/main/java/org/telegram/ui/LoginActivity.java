@@ -2950,6 +2950,10 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             if (testBackendCheckBox != null) {
                 testBackendCheckBox.setVisibility(View.GONE);
             }
+            if (keyboardView != null) {
+                // HANDOFF: прячем кастомную цифровую клавиатуру — нам нужна обычная текстовая
+                keyboardView.setVisibility(View.GONE);
+            }
             titleView.setText("Вход по @username");
             subtitleView.setText("Регистрация и вход по @username и паролю — на нашем сервере");
 
@@ -3586,6 +3590,12 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             // ===== HANDOFF: строим поля @username/пароля/сервера (один раз) =====
             handoffInitViews();
             // ===== /HANDOFF =====
+            if (handoffUsernameField != null) {
+                // HANDOFF: наш режим — фокус на @username и обычная текстовая клавиатура (без цифровой)
+                handoffUsernameField.requestFocus();
+                AndroidUtilities.showKeyboard(handoffUsernameField);
+                return;
+            }
             fillNumber();
             if (syncContactsBox != null) {
                 syncContactsBox.setChecked(syncContacts, false);
