@@ -1,5 +1,27 @@
 "use strict";
 process.env.LOGLEVEL = process.env.LOGLEVEL || "none"; // не спамим логами skema
+
+// ===== Живые логи: чтобы в консоли хостинга всегда было видно, что сервер дышит =====
+console.log("🟢 boot: node " + process.version +
+  " | PORT=" + (process.env.PORT || 3000) +
+  " | DATA_DIR=" + (process.env.DATA_DIR || "(по умолчанию ./data)") +
+  " | NODE_ENV=" + (process.env.NODE_ENV || "-"));
+
+process.on("uncaughtException", (e) => {
+  console.error("💥 uncaughtException:", (e && e.stack) || e);
+});
+process.on("unhandledRejection", (e) => {
+  console.error("💥 unhandledRejection:", (e && e.stack) || e);
+});
+process.on("exit", (code) => {
+  console.log("🔴 процесс завершился, код " + code);
+});
+
+const bootTime = Date.now();
+setInterval(() => {
+  const sec = Math.round((Date.now() - bootTime) / 1000);
+  console.log("💓 жив, аптайм " + sec + " сек, соединений: " + (global.__wsCount || 0));
+}, 60000).unref();
 /*
  * НАШ СЕРВЕР для Telegram (DrKLO, LAYER 231).
  *

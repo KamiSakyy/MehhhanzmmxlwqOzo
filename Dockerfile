@@ -18,7 +18,12 @@ COPY src/ ./src/
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV DATA_DIR=/app/data
 EXPOSE 3000
+
+# Проверка жизни: спрашиваем сам себя, чтобы хостинг видел живой контейнер
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 # Хостинг сам подставляет PORT; сервер слушает 0.0.0.0 — настраивать нечего.
 CMD ["node", "server.js"]
