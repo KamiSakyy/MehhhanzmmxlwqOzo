@@ -1205,6 +1205,22 @@ handlers["updates.GetDifference"] = () => new TL.updates.DifferenceEmpty({ date:
 // ==== stickers / langpack / прочее — пустые ответы, чтобы UI не ломался ====
 handlers["stickers.GetFeaturedStickers"] = () => new TL.messages.FeaturedStickers({ hash: 0, count: 0, sets: [], unread: [] });
 handlers["langpack.GetLangPack"] = () => fail(400, "LANGPACK_NOT_SUPPORTED");
+handlers["langpack.GetLanguages"] = () => [];
+handlers["langpack.GetLanguage"] = () => fail(400, "LANGPACK_NOT_SUPPORTED");
+handlers["help.GetSuggestions"] = () => fail(400, "SUGGESTIONS_EMPTY");
+handlers["messages.GetQuickReplies"] = () => new TL.messages.QuickReplies({ hash: 0, quickReplies: [], messages: [] });
+handlers["messages.GetDefaultEmojiStatuses"] = () => new TL.Account_EmojiStatuses({ hash: 0, statuses: [] });
+handlers["messages.GetRecentEmojiStatuses"] = () => new TL.Account_EmojiStatuses({ hash: 0, statuses: [] });
+handlers["account.GetDefaultEmojiStatuses"] = () => new TL.Account_EmojiStatuses({ hash: 0, statuses: [] });
+handlers["account.GetRecentEmojiStatuses"] = () => new TL.Account_EmojiStatuses({ hash: 0, statuses: [] });
+handlers["account.GetWebBrowserConfig"] = () => new TL.DataJSON({ data: "{}" });
+handlers["messages.GetSponsoredMessages"] = () => new TL.messages.SponsoredMessages({ postsBetween: undefined, messages: [], chats: [], users: [] });
+handlers["messages.ViewSponsoredMessage"] = () => tl.boolTrue();
+handlers["messages.GetMessagesViews"] = () => new TL.messages.MessageViews({ views: [], chats: [], users: [] });
+handlers["channels.GetSendAs"] = () => new TL.channels.SendAsPeers({ peers: [], chats: [], users: [] });
+handlers["channels.GetAdminLog"] = () => new TL.channels.AdminLogResults({ events: [], chats: [], users: [] });
+handlers["channels.GetForumTopics"] = () => new TL.messages.ForumTopics({ count: 0, topics: [], messages: [], chats: [], users: [], order: undefined, pts: 0 });
+handlers["messages.GetSearchResultsPositions"] = () => [];
 handlers["langpack.GetStrings"] = () => [];
 handlers["langpack.GetDifference"] = () => new TL.LangPackDifference({ langCode: "ru", fromVersion: 0, version: 0, strings: [] });
 
@@ -1218,11 +1234,29 @@ function numOr(v, def) {
   return Number.isFinite(n) ? n : def;
 }
 
+// ---------------- безопасные заглушки ----------------
+// Если метод не реализован, но он из разряда «что-то меняем» (Set/Save/Toggle/...),
+// отдаём boolTrue — клиент не упадёт и не зациклится.
+const BOOL_PREFIXES = /^(Set|Save|Toggle|Update|Delete|Read|Mark|Add|Remove|Join|Leave|Import|Reset|Cancel|Clear|Hide|Install|Uninstall|Report|Reorder|Apply|Confirm|Accept|Decline|Disable|Enable|Register|Unregister|Bind|Stop|Start|Finish|Open|Close|Perform|Invoke|Upload|Dismiss|Rate|Send)/;
+
+function fallbackFor(name) {
+  const short = name.indexOf(".") >= 0 ? name.slice(name.indexOf(".") + 1) : name;
+  if (!BOOL_PREFIXES.test(short)) return null;
+  // методы, которые точно возвращают не Bool
+  if (/^(Send|Upload)/.test(short)) return null;
+  return tl.boolTrue();
+}
+
 // ---------------- диспетчер ----------------
 async function dispatch(ctx, obj) {
   const name = obj && obj.className ? obj.className : "";
-  const handler = handlers[name];
+  let handler = handlers[name];
   if (!handler) {
+    const fallback = fallbackFor(name);
+    if (fallback !== null) {
+      console.log("🔀 TL " + name + " — отвечаем безопасной заглушкой");
+      return { result: fallback };
+    }
     console.log("🔀 TL " + name + " — обработчика нет");
     return { error: { code: 400, text: name.toUpperCase().replace(/\./g, "_") + "_NOT_SUPPORTED" } };
   }
