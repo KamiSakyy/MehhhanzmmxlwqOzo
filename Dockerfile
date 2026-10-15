@@ -1,18 +1,24 @@
 # syntax=docker/dockerfile:1
+# Мессенджер 2026 — сервер (TL-мост вместо Telegram).
+# Один Dockerfile на любой хостинг: Railway, Render, Fly.io, Koyeb, Amvera,
+# любой Docker-раннер и обычный `docker build && docker run`.
+# Всё нужное лежит в КОРНЕ репозитория: server.js, src/, package.json.
+
 FROM node:22-alpine
 
 WORKDIR /app
 
-# Install dependencies first (better Docker layer caching)
-COPY server/package.json ./
-RUN npm install --omit=dev
+# Сначала только манифест — слой с зависимостями кэшируется
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev || npm install --omit=dev
 
-# Copy server source code
-COPY server/ ./
+# Затем исходники
+COPY server.js ./
+COPY src/ ./src/
 
 ENV NODE_ENV=production
+ENV PORT=3000
 EXPOSE 3000
 
-# Railway automatically provides the PORT environment variable.
-# The server listens on 0.0.0.0:$PORT — no configuration needed.
+# Хостинг сам подставляет PORT; сервер слушает 0.0.0.0 — настраивать нечего.
 CMD ["node", "server.js"]

@@ -851,6 +851,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
     }
 
     private void setCustomKeyboardVisible(boolean visible, boolean animate) {
+        // ===== HANDOFF: цифровую клавиатуру Telegram (ввод номера телефона) НЕ показываем никогда =====
+        visible = false;
         if (customKeyboardWasVisible == visible && animate) return;
         customKeyboardWasVisible = visible;
 
@@ -2865,7 +2867,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
         @Override
         public boolean hasCustomKeyboard() {
-            return true;
+            // ===== HANDOFF: вход по @username+паролю — цифровая телефонная клавиатура не нужна =====
+            return false;
         }
 
         @Override

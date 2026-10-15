@@ -9,7 +9,7 @@ android/local.properties
 *.jks
 
 # Server
-server/node_modules/
+node_modules/
 
 # IDE / OS
 .idea/
@@ -17,8 +17,9 @@ server/node_modules/
 .vscode/
 .DS_Store
 
-# Handoff: загруженные медиа-файлы сервера (не коммитим)
-server/uploads/
-server/data/
-server/test-data/
-server/test-data-e2e/
+# Данные сервера (не коммитим)
+uploads/
+data/
+test-data/
+test-data-e2e/
+test-data-startup/
