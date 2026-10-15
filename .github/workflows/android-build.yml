@@ -92,7 +92,8 @@ jobs:
           LOG=""
           for f in "$RUNNER_TEMP/debug-build.log" "$RUNNER_TEMP/release-build.log"; do
             if [ -f "$f" ]; then
-              LOG="$LOG$(printf '\n===== %s =====\n' "$f")$(tail -150 "$f")"
+              LOG="$LOG$(printf '\n===== ОШИБКИ %s =====\n' "$f")$(grep -nE "error:|^e: |FAILED|Execution failed|What went wrong|^\* Exception|Caused by:" "$f" | head -60)"
+              LOG="$LOG$(printf '\n===== ХВОСТ %s =====\n' "$f")$(tail -60 "$f")"
             fi
           done
           SAN=$(printf '%s' "$LOG" | sed 's/%/%25/g; s/\r/%0D/g')
@@ -167,6 +168,15 @@ jobs:
           path: handoff/apk/*.apk
           retention-days: 30
 
+      - name: 📤 Полный лог сборки (всегда, чтобы видеть ошибку)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: handoff-build-log
+          path: ${{ runner.temp }}/tg-build.log
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: 🩺 Диагностика — лог сборки в аннотации + комментарий в PR
         if: failure()
         env:
@@ -174,7 +184,8 @@ jobs:
         run: |
           LOG=""
           if [ -f "$RUNNER_TEMP/tg-build.log" ]; then
-            LOG="$(tail -150 "$RUNNER_TEMP/tg-build.log")"
+            LOG="$(printf '===== ОШИБКИ КОМПИЛЯЦИИ =====\n')$(grep -nE "error:|^e: |warning: .*error|FAILED|Execution failed for task|What went wrong|^\* Exception is|Caused by:|Could not" "$RUNNER_TEMP/tg-build.log" | head -80)"
+            LOG="$LOG$(printf '\n===== ХВОСТ =====\n')$(tail -60 "$RUNNER_TEMP/tg-build.log")"
           fi
           SAN=$(printf '%s' "$LOG" | sed 's/%/%25/g; s/\r/%0D/g')
           if printf '%s\n' "$SAN" | grep -q "FAILURE: Build failed"; then
