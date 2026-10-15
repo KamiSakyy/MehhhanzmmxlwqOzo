@@ -10,11 +10,28 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
+/*
+ * Где живут данные.
+ * В Docker файловая система контейнера ephemeral: при каждом деплое Railway
+ * создаёт НОВЫЙ контейнер, и всё, что записано внутрь, исчезает (аккаунты, чаты,
+ * сообщения). Поэтому:
+ *   1) если примонтирован Railway Volume (переменная RAILWAY_VOLUME_MOUNT_PATH) —
+ *      пишем туда, данные переживают любые деплои;
+ *   2) иначе — в DATA_DIR (по умолчанию /app/data в Docker, ./data локально).
+ * Чтобы данные не пропадали, в Railway нужно добавить Volume с mount path = /app/data.
+ */
+const DATA_DIR = process.env.DATA_DIR
+  || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "data") : null)
+  || path.join(__dirname, "..", "data");
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+try {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  console.log("💾 Данные: " + DB_FILE + (process.env.RAILWAY_VOLUME_MOUNT_PATH ? " (Railway Volume — сохраняется между деплоями)" : " (ВНИМАНИЕ: без Volume данные сотрутся при деплое!)"));
+} catch (e) {
+  console.error("⚠️ не смогли создать " + UPLOAD_DIR + ": " + e.message);
+}
 
 const db = {
   users: {},       // uid(string) -> user
@@ -46,6 +63,11 @@ function load() {
   } catch (e) {
     console.error("⚠️ не смогли прочитать db.json:", e.message);
   }
+  console.log("📂 Загружено из базы: пользователей " + Object.keys(db.users).length +
+    ", чатов " + Object.keys(db.chats).length +
+    ", сообщений " + Object.values(db.messages).reduce((a, m) => a + (m ? m.length : 0), 0) +
+    ", файлов " + Object.keys(db.files).length +
+    ", сессий " + Object.keys(db.tokens).length);
 }
 
 let saveTimer = null;
