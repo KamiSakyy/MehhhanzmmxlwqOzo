@@ -38,8 +38,113 @@ function refToFileId(buf) {
 }
 
 // ---------------- чтение / запись ----------------
+/*
+ * HANDOFF: клиент (DrKLO/Telegram, LAYER 231) шлёт НОВЫЕ TL-конструкторы, а схема
+ * @tgsnake/skema знает старые — из-за этого часть запросов вообще не разбиралась
+ * (сообщения не грузились, группы/каналы не создавались, обновления не приходили).
+ *
+ * Где поля совпадают один-в-один — просто подменяем 4 байта конструктора.
+ * Где раскладка другая — разбираем запрос руками и отдаём объект старого вида.
+ */
+const CTOR_TRANSLATE = new Map([
+  [0x4222fa74, 0x63c66506], // messages.getMessages   (id:Vector<int>)
+  [0x93d7b347, 0xad8c9a23], // channels.getMessages   (channel, id)
+  [0x6c50051c, 0xde91436e], // messages.importChatInvite (hash:string)
+  [0x24b524c5, 0x7f6a1e22], // channels.joinChannel   (channel)
+  [0x199f3a6c, 0xc9e33d54], // channels.inviteToChannel (channel, users)
+  [0xc7025931, 0x9156982a], // upload.getFileHashes   (location, offset)
+]);
+
+async function readTlObjects(io, count) {
+  const out = [];
+  for (let i = 0; i < count; i++) out.push(await TLObject.read(io));
+  return out;
+}
+
+async function readTlVector(io) {
+  const n = io.readInt32LE();
+  if (n === 0x1cb5c415) return readTlVector(io); // на всякий случай: «голый» Vector
+  if (n < 0 || n > 100000) throw new Error("bad vector size " + n);
+  return readTlObjects(io, n);
+}
+
+async function readTlString(io) {
+  return Primitive.String.read(io);
+}
+
+// --- ручные разборщики запросов нового слоя ---
+const MANUAL_PARSERS = {
+  // messages.uploadMedia#519bc2b1 peer:InputPeer media:InputMedia
+  0x519bc2b1: async (io) => ({
+    className: "messages.UploadMedia",
+    peer: await TLObject.read(io),
+    media: await TLObject.read(io)
+  }),
+  // langpack.getLangPack#9ab5c58e lang_code:string
+  0x9ab5c58e: async (io) => ({
+    className: "langpack.GetLangPack",
+    langPack: "android",
+    langCode: await readTlString(io)
+  }),
+  // langpack.getStrings#2e1ee318 lang_code:string keys:Vector<string>
+  0x2e1ee318: async (io) => {
+    const obj = { className: "langpack.GetStrings", langPack: "android" };
+    obj.langCode = await readTlString(io);
+    const n = io.readInt32LE();
+    const keys = [];
+    for (let i = 0; i < n; i++) keys.push(await readTlString(io));
+    obj.keys = keys;
+    return obj;
+  },
+  // langpack.getLanguages#800fd57d — без полей
+  0x800fd57d: async () => ({ className: "langpack.GetLanguages", langPack: "android" }),
+  // messages.createChat#34a818 flags:# users:Vector<InputUser> title:string ttl_period:flags.0?int
+  0x34a818: async (io) => {
+    const flags = io.readInt32LE();
+    const users = await readTlVector(io);
+    const title = await readTlString(io);
+    if (flags & 1) io.readInt32LE(); // ttl_period — нам не нужен
+    return { className: "messages.CreateChat", users: users, title: title };
+  },
+  // messages.addChatUser#f24753e3 chat_id:long user_id:InputUser fwd_limit:int
+  0xf24753e3: async (io) => ({
+    className: "messages.AddChatUser",
+    chatId: Number(io.readBigInt64LE()),
+    userId: await TLObject.read(io),
+    fwdLimit: io.readInt32LE()
+  }),
+  // updates.getDifference#25939651 flags:# pts:int pts_total_limit:flags.0?int date:int qts:int
+  0x25939651: async (io) => {
+    const flags = io.readInt32LE();
+    const pts = io.readInt32LE();
+    const ptsTotalLimit = (flags & 1) ? io.readInt32LE() : 0;
+    const date = io.readInt32LE();
+    const qts = io.readInt32LE();
+    return { className: "updates.GetDifference", pts: pts, ptsTotalLimit: ptsTotalLimit, date: date, qts: qts };
+  }
+};
+
 async function readObject(buffer) {
-  let obj = await TLObject.read(BytesIO.from(Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || [])));
+  let buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  if (buf.length >= 4) {
+    const ctor = buf.readUInt32LE(0);
+    const manual = MANUAL_PARSERS[ctor];
+    if (manual) {
+      const io = BytesIO.from(buf);
+      io.read(4); // съедаем конструктор
+      try {
+        return await manual(io);
+      } catch (e) {
+        throw new Error("manual parse 0x" + ctor.toString(16) + ": " + e.message);
+      }
+    }
+    const legacy = CTOR_TRANSLATE.get(ctor);
+    if (legacy !== undefined) {
+      buf = Buffer.from(buf);
+      buf.writeUInt32LE(legacy, 0);
+    }
+  }
+  let obj = await TLObject.read(BytesIO.from(buf));
   let guard = 0;
   while (obj && guard++ < 8) {
     const cls = obj.className || "";

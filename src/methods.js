@@ -229,12 +229,12 @@ handlers["messages.GetRecentReactions"] = () => new TL.messages.Reactions({ hash
 handlers["messages.GetPinnedSavedDialogs"] = () => tl.messagesResult([], [], []);
 handlers["chatlists.GetLeaveChatlistSuggestions"] = () => tl.updates([], [], []);
 handlers["bots.GetPopularAppBots"] = () => [];
-handlers["stickers.GetAllStickers"] = () => new TL.messages.AllStickers({ hash: 0, stickers: [] });
+handlers["stickers.GetAllStickers"] = () => new TL.messages.AllStickers({ hash: 0, sets: [] });
 handlers["stickers.GetRecentStickers"] = () => new TL.messages.RecentStickers({ hash: 0, packs: [], stickers: [], dates: [] });
 handlers["stickers.GetFeaturedStickers"] = () => new TL.messages.FeaturedStickers({ hash: 0, count: 0, sets: [], unread: [] });
 handlers["premium.GetPromo"] = () => fail(400, "PREMIUM_NOT_AVAILABLE");
 handlers["stories.GetAllStories"] = () => new TL.stories.AllStories({ hasMore: false, state: "", peerStories: [] });
-handlers["stories.GetPeerStories"] = () => new TL.stories.PeerStories({ peer: undefined, stories: [] });
+handlers["stories.GetPeerStories"] = () => new TL.stories.PeerStories({ stories: [], chats: [], users: [] });
 handlers["phone.GetGroupCall"] = () => fail(400, "CALL_NOT_SUPPORTED");
 handlers["payments.GetPaymentForm"] = () => fail(400, "PAYMENTS_NOT_SUPPORTED");
 handlers["account.GetContentSettings"] = () => new TL.account.ContentSettings({ sensitiveEnabled: false, sensitiveCanChange: true });
@@ -866,10 +866,10 @@ handlers["messages.GetEmojiKeywords"] = (ctx, req) => new TL.EmojiKeywordsDiffer
 handlers["messages.GetEmojiKeywordsDifference"] = (ctx, req) => new TL.EmojiKeywordsDifference({ langCode: String(req.langCode || "ru"), fromVersion: 0, version: 1, keywords: [] });
 handlers["messages.GetEmojiURL"] = () => new TL.EmojiURL({ url: "" });
 handlers["messages.GetEmojiStatusGroups"] = () => new TL.messages.EmojiGroups({ hash: 0, groups: [] });
-handlers["messages.GetEmojiStickers"] = () => new TL.messages.AllStickers({ hash: 0, stickers: [] });
+handlers["messages.GetEmojiStickers"] = () => new TL.messages.AllStickers({ hash: 0, sets: [] });
 handlers["messages.GetFeaturedEmojiStickers"] = () => new TL.messages.FeaturedStickers({ hash: 0, count: 0, sets: [], unread: [] });
-handlers["messages.GetAllStickers"] = () => new TL.messages.AllStickers({ hash: 0, stickers: [] });
-handlers["messages.GetStickers"] = () => new TL.messages.AllStickers({ hash: 0, stickers: [] });
+handlers["messages.GetAllStickers"] = () => new TL.messages.AllStickers({ hash: 0, sets: [] });
+handlers["messages.GetStickers"] = () => new TL.messages.AllStickers({ hash: 0, sets: [] });
 handlers["messages.GetFeaturedStickers"] = () => new TL.messages.FeaturedStickers({ hash: 0, count: 0, sets: [], unread: [] });
 handlers["messages.GetRecentStickers"] = () => new TL.messages.RecentStickers({ hash: 0, packs: [], stickers: [], dates: [] });
 handlers["messages.GetFavedStickers"] = () => new TL.messages.FavedStickers({ hash: 0, packs: [], stickers: [] });
@@ -1204,25 +1204,30 @@ handlers["updates.GetDifference"] = () => new TL.updates.DifferenceEmpty({ date:
 
 // ==== stickers / langpack / прочее — пустые ответы, чтобы UI не ломался ====
 handlers["stickers.GetFeaturedStickers"] = () => new TL.messages.FeaturedStickers({ hash: 0, count: 0, sets: [], unread: [] });
+// ===== HANDOFF: языковые пакеты НЕ отдаём никогда. =====
+// В APK DrKLO/Telegram русский и ещё 9 языков ВСТРОЕНЫ (res/values-ru/strings.xml и т.д.).
+// Как только сервер отдаёт хоть что-то по langpack.*, клиент переключается на «удалённый»
+// пакет, а он у нас пустой — и интерфейс становится английским/пустым.
+// Поэтому на все запросы langpack отвечаем ошибкой: клиент остаётся на встроенных переводах.
 handlers["langpack.GetLangPack"] = () => fail(400, "LANGPACK_NOT_SUPPORTED");
-handlers["langpack.GetLanguages"] = () => [];
+handlers["langpack.GetLanguages"] = () => fail(400, "LANGPACK_NOT_SUPPORTED");
 handlers["langpack.GetLanguage"] = () => fail(400, "LANGPACK_NOT_SUPPORTED");
 handlers["help.GetSuggestions"] = () => fail(400, "SUGGESTIONS_EMPTY");
-handlers["messages.GetQuickReplies"] = () => new TL.messages.QuickReplies({ hash: 0, quickReplies: [], messages: [] });
-handlers["messages.GetDefaultEmojiStatuses"] = () => new TL.Account_EmojiStatuses({ hash: 0, statuses: [] });
-handlers["messages.GetRecentEmojiStatuses"] = () => new TL.Account_EmojiStatuses({ hash: 0, statuses: [] });
-handlers["account.GetDefaultEmojiStatuses"] = () => new TL.Account_EmojiStatuses({ hash: 0, statuses: [] });
-handlers["account.GetRecentEmojiStatuses"] = () => new TL.Account_EmojiStatuses({ hash: 0, statuses: [] });
+handlers["messages.GetQuickReplies"] = () => new TL.messages.QuickReplies({ quickReplies: [], messages: [], chats: [], users: [] });
+handlers["messages.GetDefaultEmojiStatuses"] = () => new TL.account.EmojiStatuses({ hash: 0, statuses: [] });
+handlers["messages.GetRecentEmojiStatuses"] = () => new TL.account.EmojiStatuses({ hash: 0, statuses: [] });
+handlers["account.GetDefaultEmojiStatuses"] = () => new TL.account.EmojiStatuses({ hash: 0, statuses: [] });
+handlers["account.GetRecentEmojiStatuses"] = () => new TL.account.EmojiStatuses({ hash: 0, statuses: [] });
 handlers["account.GetWebBrowserConfig"] = () => new TL.DataJSON({ data: "{}" });
 handlers["messages.GetSponsoredMessages"] = () => new TL.messages.SponsoredMessages({ postsBetween: undefined, messages: [], chats: [], users: [] });
 handlers["messages.ViewSponsoredMessage"] = () => tl.boolTrue();
 handlers["messages.GetMessagesViews"] = () => new TL.messages.MessageViews({ views: [], chats: [], users: [] });
 handlers["channels.GetSendAs"] = () => new TL.channels.SendAsPeers({ peers: [], chats: [], users: [] });
 handlers["channels.GetAdminLog"] = () => new TL.channels.AdminLogResults({ events: [], chats: [], users: [] });
-handlers["channels.GetForumTopics"] = () => new TL.messages.ForumTopics({ count: 0, topics: [], messages: [], chats: [], users: [], order: undefined, pts: 0 });
+handlers["channels.GetForumTopics"] = () => new TL.messages.ForumTopics({ orderByCreateDate: false, count: 0, topics: [], messages: [], chats: [], users: [], pts: 0 });
 handlers["messages.GetSearchResultsPositions"] = () => [];
-handlers["langpack.GetStrings"] = () => [];
-handlers["langpack.GetDifference"] = () => new TL.LangPackDifference({ langCode: "ru", fromVersion: 0, version: 0, strings: [] });
+handlers["langpack.GetStrings"] = () => fail(400, "LANGPACK_NOT_SUPPORTED");
+handlers["langpack.GetDifference"] = () => fail(400, "LANGPACK_NOT_SUPPORTED");
 
 function queryName(req) {
   const n = req && req.__fileName;
