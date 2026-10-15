@@ -214,6 +214,19 @@ handlers["account.DeleteAccount"] = () => tl.boolTrue();
 handlers["account.GetNotifyExceptions"] = () => tl.updates([], [], []);
 handlers["account.GetWallPapers"] = () => new TL.account.WallPapers({ hash: 0, wallpapers: [] });
 handlers["account.GetThemes"] = () => new TL.account.Themes({ hash: 0, themes: [] });
+handlers["account.GetChatThemes"] = () => new TL.account.ChatThemes({ hash: 0, themes: [] });
+handlers["messages.GetRecentReactions"] = () => new TL.messages.Reactions({ hash: 0, reactions: [] });
+handlers["messages.GetPinnedSavedDialogs"] = () => tl.messagesResult([], [], []);
+handlers["chatlists.GetLeaveChatlistSuggestions"] = () => tl.updates([], [], []);
+handlers["bots.GetPopularAppBots"] = () => [];
+handlers["stickers.GetAllStickers"] = () => new TL.messages.AllStickers({ hash: 0, stickers: [] });
+handlers["stickers.GetRecentStickers"] = () => new TL.messages.RecentStickers({ hash: 0, packs: [], stickers: [], dates: [] });
+handlers["stickers.GetFeaturedStickers"] = () => new TL.messages.FeaturedStickers({ hash: 0, count: 0, sets: [], unread: [] });
+handlers["premium.GetPromo"] = () => fail(400, "PREMIUM_NOT_AVAILABLE");
+handlers["stories.GetAllStories"] = () => new TL.stories.AllStories({ hasMore: false, state: "", peerStories: [] });
+handlers["stories.GetPeerStories"] = () => new TL.stories.PeerStories({ peer: undefined, stories: [] });
+handlers["phone.GetGroupCall"] = () => fail(400, "CALL_NOT_SUPPORTED");
+handlers["payments.GetPaymentForm"] = () => fail(400, "PAYMENTS_NOT_SUPPORTED");
 handlers["account.GetContentSettings"] = () => new TL.account.ContentSettings({ sensitiveEnabled: false, sensitiveCanChange: true });
 
 // ==== users ====
@@ -351,7 +364,9 @@ handlers["messages.GetDialogs"] = (ctx, req) => {
   }
   return tl.dialogsResult(dialogs, messages, chatsForPeers(slice), users);
 };
-handlers["messages.GetPinnedDialogs"] = () => tl.dialogsResult([], [], [], []);
+handlers["messages.GetPinnedDialogs"] = (ctx, req) => new TL.messages.PeerDialogs({
+  dialogs: [], messages: [], chats: [], users: [], state: tl.state()
+});
 handlers["messages.GetPeerDialogs"] = (ctx, req) => {
   const dialogs = [];
   const messages = [];
@@ -588,6 +603,42 @@ handlers["messages.SendMultiMedia"] = (ctx, req) => {
     updatesList.push(new TL.UpdateNewMessage({ message: tl.message(msg, ctx.uid), pts: tl.PTS, ptsCount: tl.PTS_COUNT }));
   }
   return tl.updates(updatesList, chatUsers(chat, ctx.uid), chat.type === "private" ? [] : [tl.chat(chat)]);
+};
+
+handlers["messages.ForwardMessages"] = (ctx, req) => {
+  const fromChat = resolvePeer(ctx, req.fromPeer);
+  if (!fromChat) return fail(400, "PEER_ID_INVALID");
+  const toPeers = (req.toPeers || [req.toPeer]).filter(Boolean);
+  const ids = (req.id || []).map((i) => numOr(i, 0));
+  const updateList = [];
+  const chats = [];
+  const users = [];
+  for (const p of toPeers) {
+    const chat = resolvePeer(ctx, p);
+    if (!chat) continue;
+    for (const id of ids) {
+      const src = store.getMessage(fromChat.id, id);
+      if (!src) continue;
+      const author = store.getUser(src.fromUid);
+      const msg = store.addMessage(chat.id, ctx.uid, {
+        text: src.text,
+        media: src.media,
+        entities: src.entities,
+        forwardFrom: { uid: src.fromUid, name: author ? author.name : "", date: src.date }
+      });
+      const upd = chat.type === "channel"
+        ? new TL.UpdateNewChannelMessage({ message: tl.message(msg, ctx.uid), pts: tl.PTS, ptsCount: tl.PTS_COUNT })
+        : new TL.UpdateNewMessage({ message: tl.message(msg, ctx.uid), pts: tl.PTS, ptsCount: tl.PTS_COUNT });
+      updateList.push(upd);
+      pushToChat(chat, (uid) => tl.updates([upd], chatUsers(chat, uid), chat.type === "private" ? [] : [tl.chat(chat)]));
+      for (const u of chatUsers(chat, ctx.uid)) if (!users.some((x) => String(x.id) === String(u.id))) users.push(u);
+    }
+    if (chat.type !== "private") {
+      const obj = tl.chat(chat);
+      if (obj && !chats.some((c) => String(c.id) === String(obj.id))) chats.push(obj);
+    }
+  }
+  return tl.updates(updateList, users, chats);
 };
 
 handlers["messages.SendScheduledMessages"] = (ctx, req) => tl.updates([], [], []);

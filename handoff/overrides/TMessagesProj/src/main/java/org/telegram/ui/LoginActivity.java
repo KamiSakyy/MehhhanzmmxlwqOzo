@@ -130,6 +130,8 @@ import org.telegram.messenger.CallReceiver;
 import org.telegram.messenger.ContactsController;
 import org.telegram.messenger.Emoji;
 import org.telegram.messenger.FileLog;
+// ===== HANDOFF: наш сервер =====
+import org.telegram.messenger.HandoffBridge;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaDataController;
@@ -1350,10 +1352,10 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
     // ===== HANDOFF: наш сервер — вход/регистрация по @username + паролю (вместо MTProto по номеру телефона) =====
     private static final String HANDOFF_DEFAULT_SERVER_URL = "https://mwmmw-production.up.railway.app";
 
-    private void handoffAuthRequest(final String server, final String username, final String password, final boolean register, final BiConsumer<Boolean, String> callback) {
+    private void handoffAuthRequest(final String server, final String username, final String password, final boolean register, final BiConsumer<JSONObject, String> callback) {
         new Thread(() -> {
-            boolean ok = false;
-            String result = null;
+            JSONObject result = null;
+            String error = null;
             HttpURLConnection conn = null;
             try {
                 String base = server;
@@ -1388,19 +1390,76 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                     is.close();
                 }
                 JSONObject json = new JSONObject(sb.toString());
-                ok = json.optBoolean("ok");
-                result = ok ? json.optString("token") : json.optString("error");
+                if (json.optBoolean("ok")) {
+                    result = json;
+                } else {
+                    error = json.optString("error", "Ошибка сервера");
+                }
             } catch (Exception e) {
-                result = "Ошибка сети: " + e.getMessage();
+                error = "Ошибка сети: " + e.getMessage();
             } finally {
                 if (conn != null) {
                     conn.disconnect();
                 }
             }
-            final boolean finalOk = ok;
-            final String finalResult = result;
-            AndroidUtilities.runOnUIThread(() -> callback.accept(finalOk, finalResult));
+            final JSONObject finalResult = result;
+            final String finalError = error;
+            AndroidUtilities.runOnUIThread(() -> callback.accept(finalResult, finalError));
         }).start();
+    }
+
+    /**
+     * HANDOFF: после успешного входа/регистрации на нашем сервере активируем аккаунт
+     * точно так же, как это делает Telegram после auth.signIn, — и открываем главный экран.
+     */
+    private void handoffAuthorize(JSONObject json, String serverUrl, boolean afterSignup) {
+        try {
+            JSONObject u = json.optJSONObject("user");
+            if (u == null) {
+                handoffShowError("Сервер не вернул профиль");
+                return;
+            }
+            String username = u.optString("username", "").replace("@", "");
+            TLRPC.TL_user user = new TLRPC.TL_user();
+            user.id = u.optLong("uid", 0);
+            user.access_hash = u.optLong("accessHash", user.id);
+            user.first_name = u.optString("name", username);
+            user.last_name = u.optString("lastName", "");
+            if (TextUtils.isEmpty(user.first_name)) {
+                user.first_name = username;
+            }
+            user.username = username;
+            user.phone = "";
+            user.photo = new TLRPC.TL_userProfilePhotoEmpty();
+            user.status = new TLRPC.TL_userStatusRecently();
+            // биты: access_hash | first_name | last_name | username | phone | photo | status
+            user.flags = 1 | 2 | 4 | 8 | 16 | 32 | 64;
+
+            UserConfig.getInstance(currentAccount).setCurrentUser(user);
+            UserConfig.getInstance(currentAccount).saveConfig(true);
+
+            ArrayList<TLRPC.User> users = new ArrayList<>();
+            users.add(user);
+            try {
+                MessagesStorage.getInstance(currentAccount).putUsersAndChats(users, null, true, true);
+            } catch (Exception ignore) { }
+            MessagesController.getInstance(currentAccount).putUser(user, false);
+            NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.mainUserInfoChanged);
+
+            // подключаем наш транспорт: все дальнейшие TL-запросы пойдут на наш сервер
+            HandoffBridge bridge = HandoffBridge.getInstance();
+            bridge.setServer(serverUrl);
+            bridge.setToken(json.optString("token", ""));
+            bridge.start(currentAccount);
+
+            if (afterSignup) {
+                MessagesController.getInstance(currentAccount).putDialogsEndReachedAfterRegistration();
+            }
+            needFinishActivity(afterSignup, false, 0);
+        } catch (Exception e) {
+            FileLog.e(e);
+            handoffShowError("Не удалось войти: " + e.getMessage());
+        }
     }
     // ===== /HANDOFF =====
 
@@ -3044,21 +3103,22 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             handoffStatusView.setTextColor(0xFF8A8A8E);
             handoffStatusView.setText("Подключение…");
             handoffStatusView.setVisibility(View.VISIBLE);
-            handoffAuthRequest(server, finalUsername, password, handoffRegisterMode, (ok, message) -> {
+            handoffAuthRequest(server, finalUsername, password, handoffRegisterMode, (json, message) -> {
                 handoffLoading = false;
-                if (ok) {
+                if (json != null) {
                     Context c = getContext();
                     if (c != null) {
                         c.getSharedPreferences("handoff_prefs", Context.MODE_PRIVATE).edit()
                                 .putString("username", finalUsername)
-                                .putString("token", message)
+                                .putString("server_url", server)
+                                .putString("token", json.optString("token", ""))
                                 .putBoolean("logged_in", true)
                                 .apply();
                     }
                     handoffStatusView.setTextColor(0xFF4CAF50);
                     handoffStatusView.setText("Вход выполнен: " + finalUsername);
                     handoffStatusView.setVisibility(View.VISIBLE);
-                    presentFragment(new DialogsActivity(null));
+                    handoffAuthorize(json, server, handoffRegisterMode);
                 } else {
                     handoffShowError(message == null || message.isEmpty() ? "Ошибка сервера" : message);
                 }

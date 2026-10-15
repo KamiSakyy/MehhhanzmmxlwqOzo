@@ -19,3 +19,6 @@ server/node_modules/
 
 # Handoff: загруженные медиа-файлы сервера (не коммитим)
 server/uploads/
+server/data/
+server/test-data/
+server/test-data-e2e/

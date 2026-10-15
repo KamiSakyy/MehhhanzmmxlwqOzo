@@ -51,6 +51,9 @@ import org.telegram.utils.proxy.ProxySettings;
 import org.telegram.ui.Components.VideoPlayer;
 import org.telegram.ui.LoginActivity;
 
+// ===== HANDOFF: наш сервер вместо MTProto =====
+import org.telegram.messenger.HandoffBridge;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
@@ -163,12 +166,20 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void discardConnection(int dcId, int connectionType) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         Utilities.stageQueue.postRunnable(() -> {
             native_discardConnection(currentAccount, dcId, connectionType);
         });
     }
 
     public void failNotRunningRequest(int requestToken) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         Utilities.stageQueue.postRunnable(() -> {
             native_failNotRunningRequest(currentAccount, requestToken);
         });
@@ -209,7 +220,8 @@ public class ConnectionsManager extends BaseController {
 
     public ConnectionsManager(int instance) {
         super(instance);
-        connectionState = native_getConnectionState(currentAccount);
+        // ===== HANDOFF: состояние соединения задаёт наш сервер, а не MTProto =====
+        connectionState = HANDOFF_DISABLE_MTPROTO ? ConnectionStateConnected : native_getConnectionState(currentAccount);
         String deviceModel;
         String systemLangCode;
         String langCode;
@@ -297,22 +309,42 @@ public class ConnectionsManager extends BaseController {
     }
 
     public long getCurrentTimeMillis() {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return System.currentTimeMillis();
+        }
         return native_getCurrentTimeMillis(currentAccount);
     }
 
     public int getCurrentTime() {
+        // ===== HANDOFF: время берём у системы — часы MTProto нам не нужны =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return (int) (System.currentTimeMillis() / 1000);
+        }
         return native_getCurrentTime(currentAccount);
     }
 
     public int getCurrentDatacenterId() {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return 1;
+        }
         return native_getCurrentDatacenterId(currentAccount);
     }
 
     public long getCurrentAuthKeyId() {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return System.currentTimeMillis();
+        }
         return native_getCurrentAuthKeyId(currentAccount);
     }
 
     public int getTimeDifference() {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return 1;
+        }
         return native_getTimeDifference(currentAccount);
     }
 
@@ -395,9 +427,73 @@ public class ConnectionsManager extends BaseController {
         return requestToken;
     }
 
+    // ===== HANDOFF: отправка TL-запроса на наш сервер и разбор TL-ответа =====
+    private void handoffSendRequest(final TLObject object, final RequestDelegate onComplete, final RequestDelegateTimestamp onCompleteTimestamp, int flags, int connectionType) {
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("handoff send request " + object);
+        }
+        byte[] requestBytes;
+        try {
+            NativeByteBuffer buffer = new NativeByteBuffer(object.getObjectSize());
+            object.serializeToStream(buffer);
+            object.freeResources();
+            int len = buffer.length();
+            buffer.position(0);
+            requestBytes = buffer.readData(len, true);
+            buffer.reuse();
+        } catch (Exception e) {
+            FileLog.e(e);
+            Utilities.stageQueue.postRunnable(() -> {
+                TLRPC.TL_error error = new TLRPC.TL_error();
+                error.code = -1000;
+                error.text = "SERIALIZE_ERROR";
+                if (onComplete != null) onComplete.run(null, error);
+                else if (onCompleteTimestamp != null) onCompleteTimestamp.run(null, error, 0);
+            });
+            return;
+        }
+        HandoffBridge.getInstance().sendRequest(requestBytes, (response, errorCode, errorText) -> {
+            TLObject resp = null;
+            TLRPC.TL_error error = null;
+            if (response != null && response.length >= 4) {
+                try {
+                    SerializedData data = new SerializedData(response);
+                    int magic = data.readInt32(true);
+                    resp = object.deserializeResponse(data, magic, true);
+                    data.cleanup();
+                } catch (Exception e) {
+                    FileLog.e(e);
+                    resp = null;
+                }
+            }
+            if (resp == null) {
+                error = new TLRPC.TL_error();
+                error.code = errorCode == 0 ? 500 : errorCode;
+                error.text = errorText != null ? errorText : "EMPTY_RESPONSE";
+            }
+            final TLObject finalResponse = resp;
+            final TLRPC.TL_error finalError = error;
+            Utilities.stageQueue.postRunnable(() -> {
+                try {
+                    if (onComplete != null) {
+                        onComplete.run(finalResponse, finalError);
+                    } else if (onCompleteTimestamp != null) {
+                        onCompleteTimestamp.run(finalResponse, finalError, (int) (System.currentTimeMillis() / 1000));
+                    } else if (finalResponse instanceof TLRPC.Updates) {
+                        AccountInstance.getInstance(currentAccount).getMessagesController().processUpdates((TLRPC.Updates) finalResponse, false);
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+            });
+        });
+    }
+    // ===== /HANDOFF =====
+
     private void sendRequestInternal(TLObject object, RequestDelegate onComplete, RequestDelegateTimestamp onCompleteTimestamp, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket, int flags, int datacenterId, int connectionType, boolean immediate, int requestToken) {
-        // ===== HANDOFF: MTProto вырезан — ни один API-запрос в Telegram не отправляется =====
+        // ===== HANDOFF: вместо tgnet/MTProto — НАШ сервер (HTTPS + WebSocket) =====
         if (HANDOFF_DISABLE_MTPROTO) {
+            handoffSendRequest(object, onComplete, onCompleteTimestamp, flags, connectionType);
             return;
         }
         if (BuildVars.LOGS_ENABLED) {
@@ -594,6 +690,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void cancelRequest(int token, boolean notifyServer, Runnable onCancelled) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         Utilities.stageQueue.postRunnable(() -> {
             if (onCancelled != null) {
                 listenCancel(token, () -> {
@@ -605,16 +705,28 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void cleanup(boolean resetKeys) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         native_cleanUp(currentAccount, resetKeys);
     }
 
     public void cancelRequestsForGuid(int guid) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         Utilities.stageQueue.postRunnable(() -> {
             native_cancelRequestsForGuid(currentAccount, guid);
         });
     }
 
     public void bindRequestToGuid(int requestToken, int guid) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         if (guid == 0) {
             return;
         }
@@ -622,10 +734,18 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void applyDatacenterAddress(int datacenterId, String ipAddress, int port) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         native_applyDatacenterAddress(currentAccount, datacenterId, ipAddress, port);
     }
 
     public int getConnectionState() {
+        // ===== HANDOFF: состояние соединения определяет наш сервер, а не MTProto =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return ConnectionStateConnected;
+        }
         if (connectionState == ConnectionStateConnected && isUpdating) {
             return ConnectionStateUpdating;
         }
@@ -633,10 +753,18 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void setUserId(long id) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         native_setUserId(currentAccount, id);
     }
 
     public void checkConnection() {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         byte selectedStrategy = getIpStrategy();
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("selected ip strategy " + selectedStrategy);
@@ -646,6 +774,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void setPushConnectionEnabled(boolean value) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         native_setPushConnectionEnabled(currentAccount, value);
     }
 
@@ -653,8 +785,18 @@ public class ConnectionsManager extends BaseController {
     private static final boolean HANDOFF_DISABLE_MTPROTO = true;
 
     public void init(int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, int timezoneOffset, long userId, boolean userPremium, boolean enablePushConnection) {
-        // ===== HANDOFF: MTProto не инициализируем — нет ни соединений, ни API-вызовов Telegram =====
+        // ===== HANDOFF: MTProto не инициализируем — соединения и API-вызовы идут на НАШ сервер =====
         if (HANDOFF_DISABLE_MTPROTO) {
+            try {
+                HandoffBridge bridge = HandoffBridge.getInstance();
+                bridge.init(ApplicationLoader.applicationContext);
+                bridge.start(currentAccount);
+                connectionState = ConnectionStateConnected;
+                AndroidUtilities.runOnUIThread(() -> NotificationCenter.getInstance(currentAccount)
+                        .postNotificationName(NotificationCenter.didUpdateConnectionState));
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
             return;
         }
         final SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
@@ -704,6 +846,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void setLangCode(String langCode) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             native_setLangCode(a, langCode);
@@ -711,6 +857,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void setRegId(String regId, @PushListenerController.PushType int type, String status) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         String pushString = regId;
         if (!TextUtils.isEmpty(pushString) && type == PushListenerController.PUSH_TYPE_HUAWEI) {
             pushString = "huawei://" + pushString;
@@ -728,6 +878,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void setSystemLangCode(String langCode) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             native_setSystemLangCode(a, langCode);
@@ -735,24 +889,44 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void switchBackend(boolean restart) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         SharedPreferences preferences = MessagesController.getGlobalMainSettings();
         preferences.edit().remove("language_showed2").commit();
         native_switchBackend(currentAccount, restart);
     }
 
     public boolean isTestBackend() {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return false;
+        }
         return native_isTestBackend(currentAccount) != 0;
     }
 
     public void resumeNetworkMaybe() {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         native_resumeNetwork(currentAccount, true);
     }
 
     public void updateDcSettings() {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         native_updateDcSettings(currentAccount);
     }
 
     public void setDefaultDatacenterId(int dcId) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         native_moveDatacenter(currentAccount, dcId);
     }
 
@@ -761,6 +935,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public long checkProxy(ProxySettings settings, RequestTimeDelegate requestTimeDelegate) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return System.currentTimeMillis();
+        }
         if (settings == null || !settings.isValid()) {
             return 0;
         }
@@ -773,10 +951,18 @@ public class ConnectionsManager extends BaseController {
     }
 
     private void checkWebProxyInternal(ProxySettings settings, int port, RequestTimeDelegate requestTimeDelegate) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         native_checkProxy(currentAccount, "127.0.0.1", port, "", "", settings.getSecret(), requestTimeDelegate);
     }
 
     public void setAppPaused(final boolean value, final boolean byScreenState) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         if (!byScreenState) {
             appPaused = value;
             if (BuildVars.LOGS_ENABLED) {
@@ -922,6 +1108,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void getHostByName(String hostName, long address) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         AndroidUtilities.runOnUIThread(() -> {
             ResolvedDomain resolvedDomain = dnsCache.get(hostName);
             if (resolvedDomain != null && SystemClock.elapsedRealtime() - resolvedDomain.ttl < 5 * 60 * 1000) {
@@ -970,6 +1160,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void setProxySettings(boolean enabled, ProxySettings settings) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         String address = "";
         int port = 0;
         String username = "";
@@ -1169,6 +1363,10 @@ public class ConnectionsManager extends BaseController {
         }
 
         public void addAddress(long address) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
             if (addresses.contains(address)) {
                 return;
             }
@@ -1249,6 +1447,10 @@ public class ConnectionsManager extends BaseController {
 
         @Override
         protected void onPostExecute(final ResolvedDomain result) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
             if (result != null) {
                 dnsCache.put(currentHostName, result);
                 for (int a = 0, N = addresses.size(); a < N; a++) {
@@ -1364,6 +1566,10 @@ public class ConnectionsManager extends BaseController {
 
         @Override
         protected void onPostExecute(final NativeByteBuffer result) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
             Utilities.stageQueue.postRunnable(() -> {
                 FileLog.d("3. currentTask = null, result = " + result);
                 currentTask = null;
@@ -1485,6 +1691,10 @@ public class ConnectionsManager extends BaseController {
 
         @Override
         protected void onPostExecute(final NativeByteBuffer result) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
             Utilities.stageQueue.postRunnable(() -> {
                 FileLog.d("5. currentTask = null");
                 currentTask = null;
@@ -1531,6 +1741,10 @@ public class ConnectionsManager extends BaseController {
 
     @Keep
     public static void onIntegrityCheckClassic(final int currentAccount, final int requestToken, final String project, final String nonce) {
+        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        if (HANDOFF_DISABLE_MTPROTO) {
+            return;
+        }
         AndroidUtilities.runOnUIThread(() -> {
             long start = System.currentTimeMillis();
             FileLog.d("account"+currentAccount+": server requests integrity classic check with project = "+project+" nonce = " + nonce);
