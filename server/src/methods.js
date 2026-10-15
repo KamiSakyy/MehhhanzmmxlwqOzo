@@ -39,13 +39,15 @@ function fail(code, text) {
 }
 
 // ---------------- разбор peer ----------------
-function peerUid(peer) {
+function peerUid(peer, selfUid) {
   if (!peer) return null;
   const c = peer.className || "";
-  if (c === "InputPeerUser" || c === "PeerUser" || c === "InputUser" || c === "InputUserFromMessage") {
-    return String(peer.userId != null ? peer.userId : peer.userId);
+  if (c === "InputPeerSelf" || c === "InputUserSelf" || c === "PeerUserSelf") {
+    return selfUid ? String(selfUid) : null;
   }
-  if (c === "InputPeerSelf" || c === "InputUserSelf" || c === "PeerUserSelf") return null;
+  if (c === "InputPeerUser" || c === "PeerUser" || c === "InputUser" || c === "InputUserFromMessage") {
+    return String(peer.userId);
+  }
   return null;
 }
 
@@ -117,6 +119,14 @@ function chatsForPeers(chats) {
     if (obj) out.push(obj);
   }
   return out;
+}
+
+function findChatByInvite(hash) {
+  for (const id of Object.keys(store.db.chats)) {
+    const c = store.db.chats[id];
+    if (c.inviteHash && c.inviteHash === hash) return c;
+  }
+  return null;
 }
 
 // ---------------- отправка обновлений участникам ----------------
@@ -231,11 +241,11 @@ handlers["account.GetContentSettings"] = () => new TL.account.ContentSettings({ 
 
 // ==== users ====
 handlers["users.GetUsers"] = (ctx, req) => {
-  const ids = (req.id || []).map((p) => peerUid(p)).filter(Boolean);
+  const ids = (req.id || []).map((p) => peerUid(p, ctx.uid)).filter(Boolean);
   return collectUsers(ids, ctx.uid);
 };
 handlers["users.GetFullUser"] = (ctx, req) => {
-  const uid = peerUid(req.id);
+  const uid = peerUid(req.id, ctx.uid);
   const u = store.getUser(uid);
   if (!u) return fail(400, "USER_ID_INVALID");
   return new TL.users.UserFull({ fullUser: tl.userFull(u, ctx.uid), chats: [], users: [tl.user(u, { self: String(u.uid) === String(ctx.uid) })] });
@@ -445,7 +455,15 @@ handlers["messages.GetFullChat"] = (ctx, req) => {
     users: chatUsers(chat, ctx.uid)
   });
 };
-handlers["channels.GetFullChannel"] = handlers["messages.GetFullChat"];
+handlers["channels.GetFullChannel"] = (ctx, req) => {
+  const chat = store.getChat(peerChatId(req.channel));
+  if (!chat) return fail(400, "CHANNEL_INVALID");
+  return new TL.messages.ChatFull({
+    fullChat: tl.chatFull(chat, ctx.uid),
+    chats: [tl.channel(chat)],
+    users: chatUsers(chat, ctx.uid)
+  });
+};
 handlers["messages.GetPeerSettings"] = () => new TL.PeerSettings({
   reportSpam: false, addContact: false, blockContact: false, shareContact: false,
   needContactsException: false, reportGeo: false, autoarchived: false, inviteMembers: false,
@@ -779,7 +797,30 @@ handlers["messages.UnpinAllMessages"] = (ctx, req) => {
   if (chat) { chat.pinned = []; store.save(); }
   return tl.affectedHistory(0);
 };
-handlers["messages.SaveDraft"] = () => tl.boolTrue();
+handlers["messages.SaveDraft"] = (ctx, req) => {
+  const chat = resolvePeer(ctx, req.peer);
+  if (!chat) return tl.boolTrue();
+  const entities = (req.entities || []).map((e) => ({
+    type: String((e.className || "").replace("MessageEntity", "").toLowerCase()),
+    offset: numOr(e.offset, 0),
+    length: numOr(e.length, 0),
+    url: e.url || ""
+  }));
+  chat.draft = { text: String(req.message || ""), entities: entities, date: Math.floor(Date.now() / 1000), replyTo: req.replyTo ? numOr(req.replyTo.replyToMsgId, 0) : 0 };
+  store.save();
+  const draft = String(req.message || "").length || entities.length
+    ? new TL.DraftMessage({ replyTo: undefined, message: String(req.message || ""), entities: req.entities || [], date: chat.draft.date, media: undefined, invoice: undefined })
+    : new TL.DraftMessageEmpty({ date: chat.draft.date });
+  ws.sendToUser(String(ctx.uid), tl.updates([new TL.UpdateDraftMessage({
+    peer: chat.type === "private"
+      ? new TL.PeerUser({ userId: tl.big(chat.members.find((m) => String(m) !== String(ctx.uid)) || ctx.uid) })
+      : (chat.type === "channel" ? new TL.PeerChannel({ channelId: tl.big(chat.id) }) : new TL.PeerChat({ chatId: tl.big(chat.id) })),
+    topMsgId: undefined,
+    savedPeerId: undefined,
+    draft: draft
+  })], [], []));
+  return tl.boolTrue();
+};
 handlers["messages.ClearAllDrafts"] = () => tl.boolTrue();
 handlers["messages.GetAllDrafts"] = () => tl.updates([], [], []);
 handlers["messages.ToggleDialogPin"] = () => tl.boolTrue();
@@ -792,7 +833,16 @@ handlers["messages.SendReaction"] = (ctx, req) => {
   const msg = store.getMessage(chat.id, numOr(req.msgId, 0));
   if (!msg) return tl.updates([], [], []);
   msg.reactions = msg.reactions || {};
-  const emoji = String(req.reaction || "").trim();
+  const raw = req.reaction;
+  let emoji = "";
+  if (Array.isArray(raw)) {
+    const first = raw[0];
+    if (first) emoji = String(first.emoticon || "").trim();
+  } else if (raw && typeof raw === "object") {
+    emoji = String(raw.emoticon || "").trim();
+  } else {
+    emoji = String(raw || "").trim();
+  }
   if (!emoji) {
     msg.reactions = {};
   } else {
@@ -919,6 +969,33 @@ handlers["messages.EditChatDefaultBannedRights"] = (ctx, req) => {
   return tl.updates([], [], []);
 };
 handlers["messages.MigrateChat"] = (ctx, req) => tl.updates([], [], []);
+handlers["messages.CheckChatInvite"] = (ctx, req) => {
+  const hash = String(req.hash || "");
+  const chat = findChatByInvite(hash);
+  if (!chat) return fail(400, "INVITE_HASH_INVALID");
+  return new TL.ChatInviteAlready({ chat: tl.chat(chat) });
+};
+handlers["messages.ImportChatInvite"] = (ctx, req) => {
+  const chat = findChatByInvite(String(req.hash || ""));
+  if (!chat) return fail(400, "INVITE_HASH_INVALID");
+  if (!chat.members.includes(String(ctx.uid))) chat.members.push(String(ctx.uid));
+  store.save();
+  return tl.updates([], chatUsers(chat, ctx.uid), [tl.chat(chat)]);
+};
+handlers["messages.ExportChatInvite"] = (ctx, req) => {
+  const chat = store.getChat(req.peer ? peerChatId(req.peer) : null) || resolvePeer(ctx, req.peer);
+  if (!chat) return fail(400, "CHAT_ID_INVALID");
+  if (!chat.inviteHash) chat.inviteHash = require("crypto").randomBytes(8).toString("hex");
+  store.save();
+  return new TL.ChatInviteExported({
+    revoked: false, permanent: true, requestNeeded: false,
+    link: "https://t.me/+" + chat.inviteHash, adminId: tl.big(chat.creator),
+    date: Math.floor(Date.now() / 1000), startDate: undefined, expireDate: undefined,
+    usageLimit: undefined, usage: 0, requested: 0, subscriptionExpired: undefined,
+    title: undefined, subscriptionPricing: undefined
+  });
+};
+handlers["messages.GetChatInviteImporters"] = () => new TL.messages.ChatInviteImporters({ count: 0, importers: [], users: [] });
 
 // ==== channels ====
 handlers["channels.CreateChannel"] = (ctx, req) => {

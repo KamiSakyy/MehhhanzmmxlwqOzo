@@ -333,17 +333,17 @@ public class ConnectionsManager extends BaseController {
     }
 
     public long getCurrentAuthKeyId() {
-        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        // ===== HANDOFF: ключей MTProto у нас нет =====
         if (HANDOFF_DISABLE_MTPROTO) {
-            return System.currentTimeMillis();
+            return 0;
         }
         return native_getCurrentAuthKeyId(currentAccount);
     }
 
     public int getTimeDifference() {
-        // ===== HANDOFF: native-вызов отключён — работаем через наш сервер =====
+        // ===== HANDOFF: время берём у системы =====
         if (HANDOFF_DISABLE_MTPROTO) {
-            return 1;
+            return 0;
         }
         return native_getTimeDifference(currentAccount);
     }
