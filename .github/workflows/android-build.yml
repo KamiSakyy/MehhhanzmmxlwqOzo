@@ -109,7 +109,7 @@ jobs:
     name: 🛰️ Telegram-FOSS (DrKLO) → handoff/apk — только Release, arm64
     runs-on: ubuntu-latest
     timeout-minutes: 330
-    if: github.event_name == 'workflow_dispatch' || contains(toJSON(github.event.head_commit), 'handoff') || contains(toJSON(github.event.head_commit), '.gitmodules') || contains(toJSON(github.event.head_commit), 'server') || contains(toJSON(github.event.head_commit), 'workflows')
+    if: always()   # собираем Telegram-FOSS при каждом пуше — APK всегда должен быть свежим
     steps:
       - name: 📥 Checkout репозитория
         uses: actions/checkout@v4
