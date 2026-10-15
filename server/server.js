@@ -24,6 +24,7 @@ try {
 }
 const TL = Skema ? Skema.Raw : null;
 const TLObject = Skema ? Skema.TLObject : null;
+const TLPrimitive = Skema ? Skema.Primitive : null;
 
 const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
@@ -36,13 +37,16 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 const users = new Map();    // "@username" -> { username, salt, hash, token, name, createdAt }
 const chats = new Map();    // chatId -> { id, type, title, usernames[], createdAt, lastMessage }
 const messages = new Map(); // chatId -> [ { id, from, text, time, ts, media } ]
-const files = new Map();    // fileId -> { id, name, type, size, path, owner }
+const files = new Map();    // fileId -> { id, name, type, size, path, owner, nid }
+const uploadParts = new Map(); // fileId -> Map(part -> Buffer) — части загружаемых файлов по TL
 const clients = new Map();  // WebSocket -> { username }
 
 let chatSeq = 1;
 let msgSeq = 1;
 let fileSeq = 1;
 let nextUid = 1001;
+let nextTid = 1000001;
+let nextNid = 2000001;
 
 // ---------- утилиты ----------
 function pad(n) {
@@ -281,6 +285,268 @@ function tlUserFromRecord(u, selfUsername) {
   });
 }
 
+function tlFindUserByUid(uid) {
+  for (const u of users.values()) {
+    if (u.uid === Number(uid)) return u;
+  }
+  return null;
+}
+
+function tlFindChatByTid(tid) {
+  for (const chat of chats.values()) {
+    if (chat.tid === Number(tid)) return chat;
+  }
+  return null;
+}
+
+function tlChatPeer(chat, selfUsername) {
+  if (chat.type === "private") {
+    const otherName = chat.usernames.find(u => u !== selfUsername);
+    const other = otherName ? users.get(otherName) : null;
+    if (!other) return null;
+    return new TL.PeerUser({ userId: BigInt(other.uid) });
+  }
+  if (chat.type === "group") {
+    return new TL.PeerChat({ chatId: BigInt(chat.tid) });
+  }
+  return new TL.PeerChannel({ channelId: BigInt(chat.tid) });
+}
+
+function tlMessageToTL(m, selfUsername, mediaTL) {
+  const chat = getChat(m.chatId);
+  const fromUser = users.get(m.from);
+  let peer = chat ? tlChatPeer(chat, selfUsername) : null;
+  if (!peer && fromUser) {
+    peer = new TL.PeerUser({ userId: BigInt(fromUser.uid) });
+  }
+  return new TL.Message({
+    id: m.id,
+    peerId: peer,
+    date: Math.floor(m.ts / 1000),
+    message: m.text || "",
+    out: m.from === selfUsername,
+    mentioned: false,
+    mediaUnread: false,
+    silent: false,
+    post: false,
+    fromScheduled: false,
+    legacy: false,
+    editHide: false,
+    pinned: false,
+    noforwards: false,
+    invertMedia: false,
+    offline: false,
+    videoProcessingPending: false,
+    fromId: fromUser ? new TL.PeerUser({ userId: BigInt(fromUser.uid) }) : undefined,
+    media: mediaTL || undefined
+  });
+}
+
+function tlPhotoForFile(file) {
+  const bytes = fs.existsSync(file.path) ? fs.readFileSync(file.path) : Buffer.alloc(0);
+  return new TL.Photo({
+    hasStickers: false,
+    id: BigInt(file.nid),
+    accessHash: BigInt(file.nid),
+    fileReference: Buffer.from(file.id),
+    date: Math.floor(Date.now() / 1000),
+    sizes: [
+      new TL.PhotoStrippedSize({ type: "s", bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) }),
+      new TL.PhotoCachedSize({ type: "x", w: 800, h: 600, bytes: bytes })
+    ],
+    videoSizes: [],
+    dcId: 1
+  });
+}
+
+function tlDocumentForFile(file, kind) {
+  const attrs = [new TL.DocumentAttributeFilename({ fileName: file.name })];
+  const durationSec = Math.max(1, Math.floor((file.duration || 0) / 1000));
+  if (kind === "voice") {
+    attrs.push(new TL.DocumentAttributeAudio({
+      voice: true,
+      duration: durationSec,
+      title: "",
+      performer: "",
+      waveform: Buffer.alloc(0)
+    }));
+  } else if (kind === "video" || kind === "round") {
+    attrs.push(new TL.DocumentAttributeVideo({
+      roundMessage: kind === "round",
+      supportsStreaming: true,
+      nosound: false,
+      duration: durationSec,
+      w: 640,
+      h: 640,
+      preloadPrefixSize: 0,
+      videoStartTs: 0,
+      videoCodec: ""
+    }));
+  }
+  return new TL.Document({
+    id: BigInt(file.nid),
+    accessHash: BigInt(file.nid),
+    fileReference: Buffer.from(file.id),
+    date: Math.floor(Date.now() / 1000),
+    mimeType: file.type || "application/octet-stream",
+    size: file.size,
+    thumbs: [],
+    videoThumbs: [],
+    dcId: 1,
+    attributes: attrs
+  });
+}
+
+function tlMediaForMessage(m) {
+  if (!m.media || !m.media.fileId) return undefined;
+  const file = files.get(m.media.fileId);
+  if (!file) return undefined;
+  if (m.media.type === "photo") {
+    return new TL.MessageMediaPhoto({
+      spoiler: false,
+      photo: tlPhotoForFile(file)
+    });
+  }
+  return new TL.MessageMediaDocument({
+    nopremium: false,
+    spoiler: false,
+    video: m.media.type === "video" || m.media.type === "round",
+    round: m.media.type === "round",
+    voice: m.media.type === "voice",
+    document: tlDocumentForFile(file, m.media.type),
+    altDocuments: [],
+    videoCover: [],
+    videoTimestamp: 0
+  });
+}
+
+function tlChatToTL(chat) {
+  const photo = new TL.PhotoEmpty({ id: 0n });
+  const createdSec = Math.floor(chat.createdAt / 1000);
+  if (chat.type === "group") {
+    return new TL.Chat({
+      id: BigInt(chat.tid),
+      title: chat.title || "Group",
+      photo: photo,
+      participantsCount: chat.usernames.length,
+      date: createdSec,
+      version: 1,
+      creator: false,
+      left: false,
+      deactivated: false,
+      callActive: false,
+      callNotEmpty: false,
+      noforwards: false
+    });
+  }
+  return new TL.Channel({
+    id: BigInt(chat.tid),
+    title: chat.title || "Channel",
+    photo: photo,
+    date: createdSec,
+    accessHash: BigInt(chat.tid),
+    username: "",
+    creator: false,
+    left: false,
+    broadcast: chat.type === "channel",
+    verified: false,
+    megagroup: chat.type === "group",
+    restricted: false,
+    signatures: false,
+    min: false,
+    scam: false,
+    hasLink: false,
+    hasGeo: false,
+    slowmodeEnabled: false,
+    callActive: false,
+    callNotEmpty: false,
+    fake: false,
+    gigagroup: false,
+    noforwards: false,
+    joinToSend: false,
+    joinRequest: false,
+    forum: false,
+    storiesHidden: false,
+    storiesHiddenMin: false,
+    storiesUnavailable: false,
+    signatureProfiles: false,
+    autotranslation: false,
+    broadcastMessagesAllowed: false,
+    monoforum: false,
+    forumTabs: false
+  });
+}
+
+function tlResolveInputPeer(peer, selfUsername) {
+  if (!peer || !peer.className) return null;
+  if (peer.className === "InputPeerUser") {
+    const other = tlFindUserByUid(peer.userId);
+    if (!other) return null;
+    for (const chat of chats.values()) {
+      if (chat.type === "private" && chat.usernames.includes(selfUsername) && chat.usernames.includes(other.username)) {
+        return chat;
+      }
+    }
+    // чата ещё нет — создаём (как в Telegram: первое сообщение создаёт диалог)
+    const chat = {
+      id: "c" + chatSeq++,
+      tid: nextTid++,
+      type: "private",
+      title: "",
+      usernames: [selfUsername, other.username],
+      createdAt: Date.now(),
+      lastMessage: ""
+    };
+    chats.set(chat.id, chat);
+    messages.set(chat.id, []);
+    return chat;
+  }
+  if (peer.className === "InputPeerChat") {
+    return tlFindChatByTid(peer.chatId);
+  }
+  if (peer.className === "InputPeerChannel") {
+    return tlFindChatByTid(peer.channelId);
+  }
+  return null;
+}
+
+function tlAssembleFile(fileId) {
+  const parts = uploadParts.get(String(fileId));
+  if (!parts) return null;
+  const ids = Array.from(parts.keys()).sort((a, b) => a - b);
+  const chunks = [];
+  for (const id of ids) {
+    chunks.push(parts.get(id));
+  }
+  return Buffer.concat(chunks);
+}
+
+function tlUsersForChat(chat, selfUsername) {
+  const list = [];
+  const seen = new Set();
+  for (const name of chat.usernames) {
+    const u = users.get(name);
+    if (u && !seen.has(u.username)) {
+      seen.add(u.username);
+      list.push(tlUserFromRecord(u, selfUsername));
+    }
+  }
+  return list;
+}
+
+function tlUsersForMessages(msgs, selfUsername) {
+  const list = [];
+  const seen = new Set();
+  for (const m of msgs) {
+    const u = users.get(m.from);
+    if (u && !seen.has(u.username)) {
+      seen.add(u.username);
+      list.push(tlUserFromRecord(u, selfUsername));
+    }
+  }
+  return list;
+}
+
 const tlHandlers = {
   "help.GetConfig": async (req, ctx) => {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -338,6 +604,244 @@ const tlHandlers = {
       list.push(tlUserFromRecord(u, ctx.user ? ctx.user.username : null));
     }
     return new TL.users.Users({ users: list });
+  },
+  "messages.GetDialogs": async (req, ctx) => {
+    const selfName = ctx.user ? ctx.user.username : null;
+    const dialogs = [];
+    const msgs = [];
+    const chatObjs = [];
+    const userObjs = [];
+    const seen = new Set();
+    for (const chat of chats.values()) {
+      if (!selfName || !chat.usernames.includes(selfName)) continue;
+      const peer = tlChatPeer(chat, selfName);
+      if (!peer) continue;
+      const chatMsgs = messages.get(chat.id) || [];
+      const last = chatMsgs.length ? chatMsgs[chatMsgs.length - 1] : null;
+      dialogs.push(new TL.Dialog({
+        pinned: false,
+        unreadMark: false,
+        viewForumAsMessages: false,
+        peer: peer,
+        topMessage: last ? last.id : 0,
+        readInboxMaxId: last ? last.id : 0,
+        readOutboxMaxId: last ? last.id : 0,
+        unreadCount: 0,
+        unreadMentionsCount: 0,
+        unreadReactionsCount: 0,
+        unreadPollVotesCount: 0,
+        notifySettings: new TL.PeerNotifySettings({})
+      }));
+      if (last) {
+        msgs.push(tlMessageToTL(last, selfName, tlMediaForMessage(last)));
+      }
+      if (chat.type !== "private") {
+        chatObjs.push(tlChatToTL(chat));
+      } else {
+        for (const u of tlUsersForChat(chat, selfName)) {
+          if (!seen.has(u.username)) {
+            seen.add(u.username);
+            userObjs.push(u);
+          }
+        }
+      }
+    }
+    return new TL.messages.Dialogs({
+      dialogs: dialogs,
+      messages: msgs,
+      chats: chatObjs,
+      users: userObjs
+    });
+  },
+  "messages.GetHistory": async (req, ctx) => {
+    const selfName = ctx.user ? ctx.user.username : null;
+    const chat = tlResolveInputPeer(req.peer, selfName);
+    if (!chat || !selfName || !chat.usernames.includes(selfName)) {
+      return new TL.RpcError({ errorCode: 400, errorMessage: "CHAT_NOT_FOUND" });
+    }
+    const limit = Math.min(Number(req.limit) || 50, 100);
+    const all = messages.get(chat.id) || [];
+    const slice = all.slice(-limit);
+    const msgs = slice.map(m => tlMessageToTL(m, selfName, tlMediaForMessage(m)));
+    const chatObjs = chat.type !== "private" ? [tlChatToTL(chat)] : [];
+    const userObjs = tlUsersForChat(chat, selfName);
+    for (const u of tlUsersForMessages(slice, selfName)) {
+      if (!userObjs.find(x => x.username === u.username)) {
+        userObjs.push(u);
+      }
+    }
+    return new TL.messages.Messages({
+      messages: msgs,
+      topics: [],
+      chats: chatObjs,
+      users: userObjs
+    });
+  },
+  "messages.SendMessage": async (req, ctx) => {
+    const selfName = ctx.user ? ctx.user.username : null;
+    if (!selfName) {
+      return new TL.RpcError({ errorCode: 401, errorMessage: "AUTH_REQUIRED" });
+    }
+    const chat = tlResolveInputPeer(req.peer, selfName);
+    if (!chat || !chat.usernames.includes(selfName)) {
+      return new TL.RpcError({ errorCode: 400, errorMessage: "PEER_ID_INVALID" });
+    }
+    const text = String(req.message || "").slice(0, 4000);
+    if (!text) {
+      return new TL.RpcError({ errorCode: 400, errorMessage: "MESSAGE_EMPTY" });
+    }
+    const m = saveMessage(chat.id, selfName, text, null);
+    const tlMsg = tlMessageToTL(m, selfName, null);
+    return new TL.Updates({
+      updates: [new TL.UpdateNewMessage({ message: tlMsg, pts: m.id, ptsCount: 1 })],
+      users: tlUsersForChat(chat, selfName),
+      chats: chat.type !== "private" ? [tlChatToTL(chat)] : [],
+      date: Math.floor(Date.now() / 1000),
+      seq: 0
+    });
+  },
+  "messages.SendMedia": async (req, ctx) => {
+    const selfName = ctx.user ? ctx.user.username : null;
+    if (!selfName) {
+      return new TL.RpcError({ errorCode: 401, errorMessage: "AUTH_REQUIRED" });
+    }
+    const chat = tlResolveInputPeer(req.peer, selfName);
+    if (!chat || !chat.usernames.includes(selfName)) {
+      return new TL.RpcError({ errorCode: 400, errorMessage: "PEER_ID_INVALID" });
+    }
+    const media = req.media;
+    if (!media || !media.file) {
+      return new TL.RpcError({ errorCode: 400, errorMessage: "MEDIA_EMPTY" });
+    }
+    const rawBytes = tlAssembleFile(media.file.id);
+    if (!rawBytes || !rawBytes.length) {
+      return new TL.RpcError({ errorCode: 400, errorMessage: "FILE_PARTS_MISSING" });
+    }
+    let kind = "document";
+    const attrs = Array.isArray(media.attributes) ? media.attributes : [];
+    for (const a of attrs) {
+      if (!a || !a.className) continue;
+      if (a.className === "DocumentAttributeAudio" && a.voice) kind = "voice";
+      if (a.className === "DocumentAttributeVideo") {
+        if (a.roundMessage) kind = "round";
+        else if (kind !== "voice") kind = "video";
+      }
+    }
+    if (media.className === "InputMediaUploadedPhoto") kind = "photo";
+    const name = String(media.file.name || "file").slice(0, 100);
+    const mime = String(media.mimeType || (kind === "photo" ? "image/jpeg" : "application/octet-stream")).slice(0, 100);
+    const fileId = makeId("f");
+    const filePath = path.join(UPLOAD_DIR, fileId);
+    fs.writeFileSync(filePath, rawBytes);
+    const file = {
+      id: fileId,
+      name: name,
+      type: mime,
+      size: rawBytes.length,
+      path: filePath,
+      owner: selfName,
+      nid: nextNid++
+    };
+    files.set(fileId, file);
+    const m = saveMessage(chat.id, selfName, String(req.message || ""), {
+      type: kind,
+      fileId: fileId,
+      url: "/api/file/" + fileId,
+      name: name,
+      size: rawBytes.length
+    });
+    const tlMsg = tlMessageToTL(m, selfName, tlMediaForMessage(m));
+    return new TL.Updates({
+      updates: [new TL.UpdateNewMessage({ message: tlMsg, pts: m.id, ptsCount: 1 })],
+      users: tlUsersForChat(chat, selfName),
+      chats: chat.type !== "private" ? [tlChatToTL(chat)] : [],
+      date: Math.floor(Date.now() / 1000),
+      seq: 0
+    });
+  },
+  "contacts.Search": async (req, ctx) => {
+    const selfName = ctx.user ? ctx.user.username : null;
+    const needle = String(req.q || "").toLowerCase().replace(/^@/, "");
+    const results = [];
+    const userObjs = [];
+    for (const u of users.values()) {
+      if (u.username === selfName) continue;
+      const uName = u.username.replace(/^@/, "");
+      if (!needle || uName.includes(needle) || (u.name || "").toLowerCase().includes(needle)) {
+        results.push(new TL.PeerUser({ userId: BigInt(u.uid) }));
+        userObjs.push(tlUserFromRecord(u, selfName));
+      }
+    }
+    return new TL.contacts.Found({
+      myResults: [],
+      results: results.slice(0, 50),
+      chats: [],
+      users: userObjs.slice(0, 50)
+    });
+  },
+  "channels.CreateChannel": async (req, ctx) => {
+    const selfName = ctx.user ? ctx.user.username : null;
+    if (!selfName) {
+      return new TL.RpcError({ errorCode: 401, errorMessage: "AUTH_REQUIRED" });
+    }
+    const title = String(req.title || "").trim().slice(0, 100);
+    if (!title) {
+      return new TL.RpcError({ errorCode: 400, errorMessage: "TITLE_EMPTY" });
+    }
+    const chat = {
+      id: "c" + chatSeq++,
+      tid: nextTid++,
+      type: req.broadcast ? "channel" : "group",
+      title: title,
+      usernames: [selfName],
+      createdAt: Date.now(),
+      lastMessage: ""
+    };
+    chats.set(chat.id, chat);
+    messages.set(chat.id, []);
+    const self = users.get(selfName);
+    return new TL.Updates({
+      updates: [],
+      users: self ? [tlUserFromRecord(self, selfName)] : [],
+      chats: [tlChatToTL(chat)],
+      date: Math.floor(Date.now() / 1000),
+      seq: 0
+    });
+  },
+  "upload.SaveFilePart": async (req, ctx) => {
+    const fileId = String(req.fileId);
+    const part = Number(req.filePart);
+    const bytes = Buffer.isBuffer(req.bytes) ? req.bytes : Buffer.from(req.bytes || []);
+    if (!uploadParts.has(fileId)) {
+      uploadParts.set(fileId, new Map());
+    }
+    uploadParts.get(fileId).set(part, bytes);
+    return new TLPrimitive.BoolTrue({});
+  },
+  "upload.GetFile": async (req, ctx) => {
+    const loc = req.location;
+    if (!loc || !loc.fileReference) {
+      return new TL.RpcError({ errorCode: 400, errorMessage: "FILE_REFERENCE_INVALID" });
+    }
+    const fileId = Buffer.from(loc.fileReference).toString("utf8");
+    const file = files.get(fileId);
+    if (!file || !fs.existsSync(file.path)) {
+      return new TL.RpcError({ errorCode: 404, errorMessage: "FILE_NOT_FOUND" });
+    }
+    const offset = Number(req.offset) || 0;
+    const limit = Math.min(Number(req.limit) || 1048576, 1048576);
+    const all = fs.readFileSync(file.path);
+    return new TL.upload.File({
+      type: new TL.storage.FileUnknown({}),
+      mtime: Math.floor(Date.now() / 1000),
+      bytes: all.slice(offset, offset + limit)
+    });
+  },
+  "updates.GetDifference": async (req, ctx) => {
+    return new TL.updates.DifferenceEmpty({
+      date: Math.floor(Date.now() / 1000),
+      seq: 0
+    });
   }
 };
 
@@ -475,7 +979,8 @@ const server = http.createServer(async (req, res) => {
       type: req.headers["x-file-type"] || "application/octet-stream",
       size: buffer.length,
       path: filePath,
-      owner: user.username
+      owner: user.username,
+      nid: nextNid++
     });
     console.log("📎 загружен файл " + safeName + " (" + buffer.length + " байт) от " + user.username);
     return sendJson(res, 200, {
@@ -670,6 +1175,7 @@ wss.on("connection", (ws) => {
         }
         const chat = {
           id: "c" + chatSeq++,
+          tid: nextTid++,
           type: type,
           title: title,
           usernames: type === "private" ? [client.username, members[0]] : [client.username, ...members],
