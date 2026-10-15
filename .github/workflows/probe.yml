@@ -1,0 +1,33 @@
+name: 🔍 Проверка боевого сервера
+
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: "Адрес сервера"
+        required: false
+        default: "https://mwmmw-production.up.railway.app"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 📦 Зависимости
+        run: npm install --no-audit --no-fund @tgsnake/skema @tgsnake/bytesio ws
+      - name: 🔍 Проверяем сервер
+        id: probe
+        env:
+          SERVER_URL: ${{ github.event.inputs.server || 'https://mwmmw-production.up.railway.app' }}
+          PROBE_OUT: ${{ runner.temp }}/probe.txt
+        run: node test/probe-production.js 2>&1 | tee "$PROBE_OUT"
+      - name: 📢 Результат в PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '### 🔍 Проверка сервера `%s`\n\n```\n%s\n```\n' "${{ github.event.inputs.server || 'https://mwmmw-production.up.railway.app' }}" "$(cat "$RUNNER_TEMP/probe.txt")" > "$RUNNER_TEMP/probe.md"
+          gh pr comment 1 --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/probe.md" || echo "не смогли оставить комментарий"
