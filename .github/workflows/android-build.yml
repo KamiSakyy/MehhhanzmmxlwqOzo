@@ -92,7 +92,7 @@ jobs:
           LOG=""
           for f in "$RUNNER_TEMP/debug-build.log" "$RUNNER_TEMP/release-build.log"; do
             if [ -f "$f" ]; then
-              LOG="$LOG$(printf '\n===== ОШИБКИ %s =====\n' "$f")$(grep -nE "error:|^e: |FAILED|Execution failed|What went wrong|^\* Exception|Caused by:" "$f" | head -60)"
+              LOG="$LOG$(printf '\n===== ОШИБКИ %s =====\n' "$f")$(grep -nE -A4 "error:|^e: |FAILED|Execution failed|What went wrong|^\* Exception|Caused by:" "$f" | head -120)"
               LOG="$LOG$(printf '\n===== ХВОСТ %s =====\n' "$f")$(tail -60 "$f")"
             fi
           done
@@ -184,7 +184,7 @@ jobs:
         run: |
           LOG=""
           if [ -f "$RUNNER_TEMP/tg-build.log" ]; then
-            LOG="$(printf '===== ОШИБКИ КОМПИЛЯЦИИ =====\n')$(grep -nE "error:|^e: |warning: .*error|FAILED|Execution failed for task|What went wrong|^\* Exception is|Caused by:|Could not" "$RUNNER_TEMP/tg-build.log" | head -80)"
+            LOG="$(printf '===== ОШИБКИ КОМПИЛЯЦИИ =====\n')$(grep -nE -A4 "error:|^e: |warning: .*error|FAILED|Execution failed for task|What went wrong|^\* Exception is|Caused by:|Could not" "$RUNNER_TEMP/tg-build.log" | head -120)"
             LOG="$LOG$(printf '\n===== ХВОСТ =====\n')$(tail -60 "$RUNNER_TEMP/tg-build.log")"
           fi
           SAN=$(printf '%s' "$LOG" | sed 's/%/%25/g; s/\r/%0D/g')

@@ -1409,6 +1409,31 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
     }
 
     /**
+     * HANDOFF: показать ошибку входа. Сама разметка живёт во PhoneView, поэтому
+     * отсюда (из внешнего класса) достукиваемся до неё, а если экрана нет — показываем тост.
+     */
+    private void handoffShowError(final String message) {
+        AndroidUtilities.runOnUIThread(() -> {
+            try {
+                SlideView view = views != null && views.length > VIEW_PHONE_INPUT ? views[VIEW_PHONE_INPUT] : null;
+                if (view instanceof PhoneView) {
+                    ((PhoneView) view).handoffShowError(message);
+                    return;
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+            try {
+                if (getParentActivity() != null && message != null) {
+                    Toast.makeText(getParentActivity(), message, Toast.LENGTH_SHORT).show();
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+        });
+    }
+
+    /**
      * HANDOFF: после успешного входа/регистрации на нашем сервере активируем аккаунт
      * точно так же, как это делает Telegram после auth.signIn, — и открываем главный экран.
      */
@@ -3065,7 +3090,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             field.setSingleLine(true);
         }
 
-        private void handoffShowError(String message) {
+        public void handoffShowError(String message) {
             handoffStatusView.setTextColor(0xFFE53935);
             handoffStatusView.setText(message);
             handoffStatusView.setVisibility(View.VISIBLE);
